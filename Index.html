@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timesheet Manager</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 3px solid #4285f4;
+            padding-bottom: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #4285f4;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .form-row .form-group {
+            flex: 1;
+        }
+        
+        button {
+            background-color: #4285f4;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background-color: #3367d6;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .secondary-btn {
+            background-color: #6c757d;
+        }
+        
+        .secondary-btn:hover {
+            background-color: #5a6268;
+        }
+        
+        .success-btn {
+            background-color: #28a745;
+        }
+        
+        .success-btn:hover {
+            background-color: #218838;
+        }
+        
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .alert-info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .button-group {
+            text-align: center;
+            margin-top: 30px;
+        }
+        
+        .summary-card {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border-left: 4px solid #4285f4;
+        }
+        
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        .summary-item:last-child {
+            margin-bottom: 0;
+            font-weight: bold;
+            border-top: 1px solid #dee2e6;
+            padding-top: 10px;
+        }
+        
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .quick-btn {
+            padding: 8px 16px;
+            font-size: 14px;
+            background-color: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .quick-btn:hover {
+            background-color: #138496;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⏰ Timesheet Manager</h1>
+        
+        <!-- Alert Messages -->
+        <div id="alerts"></div>
+        
+        <!-- Quick Actions -->
+        <div class="quick-actions">
+            <button class="quick-btn" onclick="fillCurrentDateTime()">Fill Current Time</button>
+            <button class="quick-btn" onclick="showMonthlySummary()">Monthly Summary</button>
+            <button class="quick-btn" onclick="initializeSheet()">Initialize Sheet</button>
+        </div>
+        
+        <!-- Timesheet Entry Form -->
+        <form id="timesheetForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="date">Date</label>
+                    <input type="date" id="date" name="date" required>
+                </div>
+                <div class="form-group">
+                    <label for="startTime">Start Time</label>
+                    <input type="time" id="startTime" name="startTime" required>
+                </div>
+                <div class="form-group">
+                    <label for="endTime">End Time</label>
+                    <input type="time" id="endTime" name="endTime" required>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="breakDuration">Break Duration (minutes)</label>
+                    <input type="number" id="breakDuration" name="breakDuration" min="0" value="0">
+                </div>
+                <div class="form-group">
+                    <label for="project">Project/Task</label>
+                    <input type="text" id="project" name="project" placeholder="e.g., Development, Meetings">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="description">Description</label>
+                <textarea id="description" name="description" rows="3" placeholder="Describe what you worked on..."></textarea>
+            </div>
+            
+            <div class="button-group">
+                <button type="submit" class="success-btn">Add Entry</button>
+                <button type="button" class="secondary-btn" onclick="clearForm()">Clear Form</button>
+            </div>
+        </form>
+        
+        <!-- Monthly Summary -->
+        <div id="monthlySummary" class="summary-card hidden">
+            <h3>📊 Monthly Summary</h3>
+            <div id="summaryContent"></div>
+        </div>
+    </div>
+
+    <script>
+        // Set current date on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('date').value = today;
+        });
+
+        // Form submission handler
+        document.getElementById('timesheetForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            addTimesheetEntry();
+        });
+
+        // Fill current date and time
+        function fillCurrentDateTime() {
+            const now = new Date();
+            const currentDate = now.toISOString().split('T')[0];
+            const currentTime = now.toTimeString().split(' ')[0].substring(0, 5);
+            
+            document.getElementById('date').value = currentDate;
+            document.getElementById('startTime').value = currentTime;
+        }
+
+        // Add timesheet entry
+        function addTimesheetEntry() {
+            const formData = new FormData(document.getElementById('timesheetForm'));
+            const entry = {
+                date: formData.get('date'),
+                startTime: formData.get('startTime'),
+                endTime: formData.get('endTime'),
+                breakDuration: parseInt(formData.get('breakDuration')) || 0,
+                project: formData.get('project'),
+                description: formData.get('description')
+            };
+
+            showAlert('Adding entry...', 'info');
+            
+            google.script.run
+                .withSuccessHandler(onAddEntrySuccess)
+                .withFailureHandler(onAddEntryFailure)
+                .addTimesheetEntry(entry.date, entry.startTime, entry.endTime, 
+                                 entry.breakDuration, entry.project, entry.description);
+        }
+
+        // Success handler for adding entry
+        function onAddEntrySuccess(rowNumber) {
+            showAlert(`Entry added successfully to row ${rowNumber}!`, 'success');
+            clearForm();
+        }
+
+        // Error handler for adding entry
+        function onAddEntryFailure(error) {
+            showAlert(`Error: ${error.message}`, 'error');
+        }
+
+        // Clear the form
+        function clearForm() {
+            document.getElementById('timesheetForm').reset();
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('date').value = today;
+        }
+
+        // Initialize sheet
+        function initializeSheet() {
+            showAlert('Initializing timesheet...', 'info');
+            
+            google.script.run
+                .withSuccessHandler(onInitializeSuccess)
+                .withFailureHandler(onInitializeFailure)
+                .initializeTimesheet();
+        }
+
+        // Success handler for initialization
+        function onInitializeSuccess() {
+            showAlert('Timesheet initialized successfully!', 'success');
+        }
+
+        // Error handler for initialization
+        function onInitializeFailure(error) {
+            showAlert(`Error: ${error.message}`, 'error');
+        }
+
+        // Show monthly summary
+        function showMonthlySummary() {
+            showAlert('Generating monthly summary...', 'info');
+            
+            google.script.run
+                .withSuccessHandler(displayMonthlySummary)
+                .withFailureHandler(onSummaryFailure)
+                .generateMonthlySummary();
+        }
+
+        // Display monthly summary
+        function displayMonthlySummary(summary) {
+            const summaryDiv = document.getElementById('monthlySummary');
+            const contentDiv = document.getElementById('summaryContent');
+            
+            contentDiv.innerHTML = `
+                <div class="summary-item">
+                    <span>Month:</span>
+                    <span>${summary.month}</span>
+                </div>
+                <div class="summary-item">
+                    <span>Total Hours:</span>
+                    <span>${summary.totalHours}</span>
+                </div>
+                <div class="summary-item">
+                    <span>Days Worked:</span>
+                    <span>${summary.daysWorked}</span>
+                </div>
+                <div class="summary-item">
+                    <span>Average Hours/Day:</span>
+                    <span>${summary.averageHoursPerDay}</span>
+                </div>
+            `;
+            
+            summaryDiv.classList.remove('hidden');
+            clearAlert();
+        }
+
+        // Error handler for summary
+        function onSummaryFailure(error) {
+            showAlert(`Error: ${error.message}`, 'error');
+        }
+
+        // Show alert message
+        function showAlert(message, type) {
+            const alertsDiv = document.getElementById('alerts');
+            alertsDiv.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+        }
+
+        // Clear alert message
+        function clearAlert() {
+            const alertsDiv = document.getElementById('alerts');
+            alertsDiv.innerHTML = '';
+        }
+
+        // Auto-suggest project based on description
+        document.getElementById('description').addEventListener('input', function() {
+            const description = this.value;
+            const projectField = document.getElementById('project');
+            
+            if (description && !projectField.value) {
+                google.script.run
+                    .withSuccessHandler(function(suggestion) {
+                        if (suggestion && !projectField.value) {
+                            projectField.value = suggestion;
+                        }
+                    })
+                    .suggestProject(description);
+            }
+        });
+    </script>
+</body>
+</html>
