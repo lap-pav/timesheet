@@ -1,0 +1,22 @@
+{
+  "name": "timesheet-aggregation-tests",
+  "version": "1.0.0",
+  "description": "Local testing environment for Google Apps Script timesheet aggregation functions",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "@types/google-apps-script": "^1.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.js"],
+    "collectCoverageFrom": [
+      "script/**/*.gs",
+      "!**/node_modules/**"
+    ]
+  }
+}

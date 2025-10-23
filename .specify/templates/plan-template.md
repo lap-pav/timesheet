@@ -47,7 +47,34 @@
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+### Google Apps Script Structure Compliance
+- [ ] Code structured for single-file deployment to Google Apps Script
+- [ ] No external dependencies beyond Google Workspace APIs
+- [ ] Functions are standalone and self-contained
+- [ ] Constants declared at top level for easy configuration
+
+### Function-Based Architecture Compliance  
+- [ ] Features implemented as independent functions with clear naming
+- [ ] camelCase naming convention followed
+- [ ] Single responsibility per function
+- [ ] No complex class hierarchies or unsupported JavaScript features
+
+### Data Flow Clarity
+- [ ] Read → Process → Output pattern maintained
+- [ ] Consistent variable naming throughout
+- [ ] Minimal nesting levels
+- [ ] Explicit and traceable data transformation steps
+
+### Error Handling & Logging
+- [ ] Try-catch blocks implemented where necessary
+- [ ] console.log() used for debugging, Logger.log() for production
+- [ ] Graceful degradation where possible
+- [ ] User-facing errors via SpreadsheetApp.getUi().alert()
+
+### Documentation & Comments
+- [ ] Inline comments explain business logic and Google Apps Script specifics
+- [ ] Function documentation includes purpose, parameters, return values
+- [ ] Configuration constants documented with usage examples
 
 ## Project Structure
 
@@ -63,41 +90,21 @@ specs/[###-feature]/
 ```
 
 ### Source Code (repository root)
-<!--
-  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
-  for this feature. Delete unused options and expand the chosen structure with
-  real paths (e.g., apps/admin, packages/something). The delivered plan must
-  not include Option labels.
--->
 ```
-# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
-src/
-├── models/
-├── services/
-├── cli/
-└── lib/
+# Google Apps Script Project Structure
+script/
+├── Code.gs              # Main Google Apps Script file
+├── appsscript.json      # Google Apps Script manifest (if needed)
+└── README.md            # Deployment instructions
 
+# Local Development Support
 tests/
-├── contract/
-├── integration/
-└── unit/
+├── unit/                # Local unit tests (JavaScript)
+└── integration/         # Integration test scenarios
 
-# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
-backend/
-├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
-└── tests/
-
-frontend/
-├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
-└── tests/
-
-# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
+docs/
+├── deployment.md        # Google Apps Script deployment guide
+└── api-reference.md     # Function documentation
 api/
 └── [same as backend above]
 

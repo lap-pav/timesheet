@@ -1,0 +1,46 @@
+{
+  "entries": [
+    {
+      "member": "JohnDoe",
+      "date": "2025-09-15",
+      "from_time": "09:00",
+      "to_time": "17:30",
+      "project": "Project Alpha",
+      "task_type": "Development",
+      "description": "Implemented user authentication module",
+      "tc_from_time": "",
+      "tc_to_time": ""
+    },
+    {
+      "member": "JohnDoe", 
+      "date": "2025-09-16",
+      "from_time": "08:30",
+      "to_time": "17:00",
+      "project": "Project Alpha",
+      "task_type": "Testing", 
+      "description": "Unit tests for authentication",
+      "tc_from_time": "09:00",
+      "tc_to_time": "17:00"
+    },
+    {
+      "member": "JaneSmith",
+      "date": "2025-09-15", 
+      "from_time": "10:00",
+      "to_time": "18:00",
+      "project": "Project Gamma",
+      "task_type": "Design",
+      "description": "UI mockups and wireframes",
+      "tc_from_time": "",
+      "tc_to_time": ""
+    }
+  ],
+  "metadata": {
+    "processedAt": "2025-10-06T10:30:00.000Z",
+    "monthFolder": "2025-09",
+    "totalFiles": 2,
+    "successfulFiles": 2,
+    "totalEntries": 3,
+    "processingTimeMs": 1500
+  },
+  "errors": []
+}

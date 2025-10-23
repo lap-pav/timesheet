@@ -37,15 +37,16 @@
 - Include exact file paths in descriptions
 
 ## Path Conventions
-- **Single project**: `src/`, `tests/` at repository root
-- **Web app**: `backend/src/`, `frontend/src/`
-- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
-- Paths shown below assume single project - adjust based on plan.md structure
+- **Google Apps Script**: `script/Code.gs` for main implementation
+- **Testing**: `tests/` for local JavaScript unit tests
+- **Documentation**: `docs/` for deployment and API reference
+- All code must be compatible with Google Apps Script runtime environment
 
 ## Phase 3.1: Setup
-- [ ] T001 Create project structure per implementation plan
-- [ ] T002 Initialize [language] project with [framework] dependencies
-- [ ] T003 [P] Configure linting and formatting tools
+- [ ] T001 Create Google Apps Script project structure in script/ directory
+- [ ] T002 Set up local development environment with JavaScript testing framework
+- [ ] T003 [P] Configure Google Apps Script compatible code formatting and linting
+- [ ] T004 [P] Create deployment documentation for Google Apps Script editor
 
 ## Phase 3.2: Tests First (TDD) ⚠️ MUST COMPLETE BEFORE 3.3
 **CRITICAL: These tests MUST be written and MUST FAIL before ANY implementation**
