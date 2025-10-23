@@ -48,34 +48,33 @@
 - [ ] T003 [P] Configure Google Apps Script compatible code formatting and linting
 - [ ] T004 [P] Create deployment documentation for Google Apps Script editor
 
-## Phase 3.2: Tests First (TDD) ⚠️ MUST COMPLETE BEFORE 3.3
-**CRITICAL: These tests MUST be written and MUST FAIL before ANY implementation**
-- [ ] T004 [P] Contract test POST /api/users in tests/contract/test_users_post.py
-- [ ] T005 [P] Contract test GET /api/users/{id} in tests/contract/test_users_get.py
-- [ ] T006 [P] Integration test user registration in tests/integration/test_registration.py
-- [ ] T007 [P] Integration test auth flow in tests/integration/test_auth.py
+## Phase 3.2: UI Function Tests Only (Focused for Demo)
+**CRITICAL: Only UI-interactive functions need tests for rapid development**
+- [ ] T005 [P] Unit test for generateTimesheetFiles() function in tests/unit/test_ui_functions.js
+- [ ] T006 [P] Unit test for aggregateMonthlyTimesheetsUI() function in tests/unit/test_ui_functions.js  
+- [ ] T007 [P] Unit test for onOpen() menu creation in tests/unit/test_ui_functions.js
+- [ ] T008 [P] Mock Google Apps Script APIs (SpreadsheetApp, DriveApp) for testing
 
-## Phase 3.3: Core Implementation (ONLY after tests are failing)
-- [ ] T008 [P] User model in src/models/user.py
-- [ ] T009 [P] UserService CRUD in src/services/user_service.py
-- [ ] T010 [P] CLI --create-user in src/cli/user_commands.py
-- [ ] T011 POST /api/users endpoint
-- [ ] T012 GET /api/users/{id} endpoint
-- [ ] T013 Input validation
-- [ ] T014 Error handling and logging
+## Phase 3.3: Core Implementation (ONLY after UI tests are failing)
+- [ ] T009 [P] Main aggregation logic in script/Code.gs
+- [ ] T010 [P] Data processing functions in script/Code.gs
+- [ ] T011 [P] UI menu handlers in script/Code.gs
+- [ ] T012 Error handling for user operations
+- [ ] T013 Input validation for spreadsheet data
+- [ ] T014 User feedback via SpreadsheetApp.getUi().alert()
 
-## Phase 3.4: Integration
-- [ ] T015 Connect UserService to DB
-- [ ] T016 Auth middleware
-- [ ] T017 Request/response logging
-- [ ] T018 CORS and security headers
+## Phase 3.4: Integration (Google Apps Script Specific)
+- [ ] T015 Google Sheets API integration
+- [ ] T016 Google Drive API integration  
+- [ ] T017 Progress tracking for long operations
+- [ ] T018 Memory management for large datasets
 
-## Phase 3.5: Polish
-- [ ] T019 [P] Unit tests for validation in tests/unit/test_validation.py
-- [ ] T020 Performance tests (<200ms)
-- [ ] T021 [P] Update docs/api.md
-- [ ] T022 Remove duplication
-- [ ] T023 Run manual-testing.md
+## Phase 3.5: Polish (Demo Ready)
+- [ ] T019 [P] Enhanced error messages for users
+- [ ] T020 Performance optimization for batch processing
+- [ ] T021 [P] Update docs/deployment.md for Google Apps Script
+- [ ] T022 Remove debugging code and console.log statements
+- [ ] T023 Manual testing checklist for Google Apps Script environment
 
 ## Dependencies
 - Tests (T004-T007) before implementation (T008-T014)

@@ -1,9 +1,10 @@
 <!--
 Sync Impact Report:
-Version change: N/A → 1.0.0 (initial constitution)
-Added sections: Google Apps Script Structure, Code Organization, Development Workflow, Governance
-Templates requiring updates: ✅ updated plan-template.md
-Follow-up TODOs: None
+Version change: 1.0.0 → 1.1.0 (added UI testing principle for rapid development)
+Added sections: Testing Requirements for UI Functions
+Modified principles: None renamed
+Templates requiring updates: ✅ updated plan-template.md, ✅ updated tasks-template.md
+Follow-up TODOs: Create unit tests for UI-interactive functions only
 -->
 
 # Timesheet Constitution
@@ -35,6 +36,11 @@ Code MUST include inline comments explaining business logic and Google Apps Scri
 
 **Rationale**: Google Apps Script code is often maintained by different team members with varying technical backgrounds.
 
+### VI. Testing Requirements for UI Functions
+Only UI-interactive functions (menu handlers, event triggers, user-facing operations) MUST have unit tests for rapid development and demo readiness. Non-UI utility functions are exempt to prioritize feature implementation speed. Tests must mock Google Apps Script APIs (SpreadsheetApp, DriveApp) using Jest framework. Focus on success paths and critical error conditions only.
+
+**Rationale**: Demo timelines require focused testing strategy. UI functions represent the primary user interaction points and need reliability assurance, while utility function testing can be deferred for rapid prototype delivery.
+
 ## Code Organization
 
 Code structure MUST follow this pattern:
@@ -54,4 +60,4 @@ Local development MUST maintain compatibility with Google Apps Script editor. Co
 
 This constitution supersedes all other development practices. All code changes MUST comply with Google Apps Script structure requirements. Amendments require documentation of Google Apps Script compatibility impact. Use this constitution for all implementation decisions.
 
-**Version**: 1.0.0 | **Ratified**: 2025-10-06 | **Last Amended**: 2025-10-06
+**Version**: 1.1.0 | **Ratified**: 2025-10-06 | **Last Amended**: 2025-10-24
