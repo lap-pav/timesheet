@@ -1,12 +1,26 @@
 # Google Apps Script Deployment Guide
 
-**Version**: 1.0.0  
-**Last Updated**: October 6, 2025  
+**Version**: 1.1.0  
+**Last Updated**: October 24, 2025  
 **Platform**: Google Apps Script  
 
 ## Overview
 
-This guide provides step-by-step instructions for deploying the Timesheet Aggregation System to Google Apps Script. The system aggregates individual timesheet files from Google Drive into normalized JSON datasets with comprehensive error handling and performance optimization.
+This guide provides step-by-step instructions for deploying the Timesheet Aggregation System with Configuration-Driven Report Export to Google Apps Script. The system aggregates individual timesheet files from Google Drive into normalized JSON datasets and generates customizable reports based on user-defined configurations.
+
+## Features
+
+### Core Features
+- **Timesheet Aggregation**: Aggregate individual timesheet files into normalized datasets
+- **Configuration-Driven Reports**: Generate customizable reports using Google Sheets configurations
+- **Error Handling**: Comprehensive error reporting and graceful degradation
+- **Performance Optimization**: Memory management and batch processing for large datasets
+
+### New: Configuration Export Feature
+- **Report Configurations**: Define report types using a Google Sheets configuration sheet
+- **Multiple Export Formats**: Generate reports as new Google Sheets documents
+- **Validation**: Automatic validation of report configurations
+- **Progress Tracking**: Real-time progress indicators for long-running operations
 
 ## Table of Contents
 

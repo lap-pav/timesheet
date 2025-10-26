@@ -1,22 +1,23 @@
 # API Reference: Timesheet Aggregation System
 
-**Version**: 1.0.0  
-**Date**: October 6, 2025  
+**Version**: 2.0.0  
+**Date**: October 24, 2025  
 **Platform**: Google Apps Script  
 
 ## Overview
 
-The Timesheet Aggregation System provides comprehensive functionality for aggregating individual member timesheet files from Google Drive folders into normalized JSON datasets. The system is designed for Google Apps Script deployment and handles large-scale data processing with robust error handling and performance optimization.
+The Timesheet Aggregation System provides comprehensive functionality for aggregating individual member timesheet files from Google Drive folders into normalized JSON datasets and exporting configurable reports. The system is designed for Google Apps Script deployment and handles large-scale data processing with robust error handling and performance optimization.
 
 ## Table of Contents
 
 1. [Core Functions](#core-functions)
-2. [Configuration](#configuration)
-3. [Data Structures](#data-structures)
-4. [Error Handling](#error-handling)
-5. [Integration APIs](#integration-apis)
-6. [Utility Functions](#utility-functions)
-7. [Performance Considerations](#performance-considerations)
+2. [Configuration Export Functions](#configuration-export-functions)
+3. [Configuration](#configuration)
+4. [Data Structures](#data-structures)
+5. [Error Handling](#error-handling)
+6. [Integration APIs](#integration-apis)
+7. [Utility Functions](#utility-functions)
+8. [Performance Considerations](#performance-considerations)
 
 ---
 
@@ -47,6 +48,178 @@ The Timesheet Aggregation System provides comprehensive functionality for aggreg
   errors: Array<ErrorObject>          // Array of error objects
 }
 ```
+
+---
+
+## Configuration Export Functions
+
+### `exportConfigurableReportUI()`
+
+**Description**: Main UI function that provides an interactive interface for users to select and export configurable reports based on aggregated timesheet data.
+
+**Parameters**: None (UI-driven function)
+
+**Returns**: Void (interacts with user through Google Apps Script UI)
+
+**Behavior**:
+- Displays configuration selection dialog
+- Shows progress tracking for long operations (>30 seconds)
+- Provides user-friendly error messages
+- Exports reports to Google Sheets with formatting
+
+**Example Usage**:
+```javascript
+// Called from Google Apps Script menu
+exportConfigurableReportUI();
+```
+
+### `readReportConfigurations()`
+
+**Description**: Reads and validates report configurations from the "Report Configs" sheet.
+
+**Parameters**: None
+
+**Returns**: Object containing:
+```javascript
+{
+  success: boolean,                   // Operation success status
+  configurations: Array<{             // Array of valid configurations
+    reportName: string,               // Unique report name (max 50 chars)
+    description: string,              // Report description (max 200 chars)  
+    columns: Array<string>,           // Selected column names
+    filters: Object,                  // Filter conditions
+    sortBy: string,                   // Sort column name
+    sortOrder: "ASC"|"DESC",          // Sort direction
+    summaryType: string,              // Summary aggregation type
+    enabled: boolean                  // Configuration enabled status
+  }>,
+  errors: Array<string>               // Validation error messages
+}
+```
+
+**Configuration Sheet Schema**:
+| Column | Field | Type | Required | Valid Values |
+|--------|-------|------|----------|--------------|
+| A | Report Name | string | Yes | Unique, max 50 chars |
+| B | Description | string | Yes | Max 200 chars |
+| C | Columns | string | Yes | Comma-separated column names |
+| D | Filters | string | No | key=value,key>value format |
+| E | Sort By | string | No | Must be in Columns list |
+| F | Sort Order | string | No | ASC or DESC |
+| G | Summary Type | string | No | NONE, MEMBER_TOTALS, DAILY_TOTALS, PROJECT_TOTALS |
+| H | Enabled | boolean | Yes | TRUE or FALSE |
+
+### `generateConfigurableReport(aggregatedData, configuration)`
+
+**Description**: Generates a customized report from aggregated timesheet data based on configuration parameters.
+
+**Parameters**:
+- `aggregatedData` (Array): Array of aggregated timesheet objects
+- `configuration` (Object): Report configuration object from readReportConfigurations()
+
+**Returns**: Object containing:
+```javascript
+{
+  success: boolean,                   // Generation success status
+  reportData: Array<Object>,          // Filtered and formatted report data
+  metadata: {
+    reportName: string,               // Report name from configuration
+    description: string,              // Report description
+    totalRecords: number,             // Number of records in final report
+    originalRecords: number,          // Number of input records
+    filteredRecords: number,          // Records after filtering
+    generatedAt: string,              // ISO timestamp
+    columns: Array<string>,           // Selected columns
+    appliedFilters: Object,           // Filters that were applied
+    sortBy: string,                   // Sort column used
+    sortOrder: string,                // Sort direction used
+    summaryType: string,              // Summary aggregation applied
+    processingInfo: {                 // Performance information
+      usedBatching: boolean,          // Whether batch processing was used
+      batchSize: number,              // Batch size for large datasets
+      isLargeDataset: boolean         // Whether dataset exceeded thresholds
+    }
+  },
+  errors: Array<string>               // Generation error messages
+}
+```
+
+**Supported Filters**:
+- `=` - Exact match
+- `!=` - Not equal
+- `>` - Greater than (numeric)
+- `<` - Less than (numeric)
+- `>=` - Greater than or equal (numeric)
+- `<=` - Less than or equal (numeric)
+- `contains` - Text contains substring
+
+**Summary Types**:
+- `NONE` - No aggregation, show individual records
+- `MEMBER_TOTALS` - Aggregate by team member
+- `DAILY_TOTALS` - Aggregate by date
+- `PROJECT_TOTALS` - Aggregate by project
+
+### `exportReportToGoogleSheets(reportData, metadata, outputLocation)`
+
+**Description**: Exports generated report data to Google Sheets with formatting and metadata.
+
+**Parameters**:
+- `reportData` (Array): Array of report data objects from generateConfigurableReport()
+- `metadata` (Object): Report metadata object
+- `outputLocation` (string): Either "new_file" or "current_sheet"
+
+**Returns**: Object containing:
+```javascript
+{
+  success: boolean,                   // Export success status
+  fileId: string,                     // Google Sheets file ID
+  fileName: string,                   // Name of created/updated file
+  sheetName: string,                  // Name of sheet containing report
+  errors: Array<string>               // Export error messages
+}
+```
+
+**Features**:
+- Automatic file organization (same folder as source spreadsheet)
+- Rich formatting with headers, colors, and frozen rows
+- Metadata section with report details
+- Batch processing for large datasets (>1000 rows)
+- Unique sheet naming to prevent conflicts
+
+### `selectReportConfigurationUI(configurations)`
+
+**Description**: Provides an interactive UI for users to select from available report configurations.
+
+**Parameters**:
+- `configurations` (Array): Array of configuration objects from readReportConfigurations()
+
+**Returns**: Object or null:
+- Selected configuration object, or null if user cancels
+
+**Behavior**:
+- Single configuration: Shows confirmation dialog
+- Multiple configurations: Shows numbered selection prompt
+- Input validation with retry for invalid selections
+- User-friendly configuration previews
+
+---
+
+## Available Report Columns
+
+The following columns are available for report configuration:
+
+| Column Name | Data Source | Description |
+|-------------|-------------|-------------|
+| Member Name | member.name | Team member's full name |
+| Email | member.email | Team member's email address |
+| Total Hours | aggregated calculation | Sum of hours for the period |
+| Date | timesheet.date | Date of timesheet entry |
+| Hours | timesheet.hours | Hours logged for specific entry |
+| Project Name | timesheet.project | Project name or code |
+| Task Description | timesheet.description | Description of work performed |
+| Status | member.status | Member status (active/inactive) |
+| Department | member.department | Member's department |
+| Role | member.role | Member's role or position |
 
 **Example**:
 ```javascript

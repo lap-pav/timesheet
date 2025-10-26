@@ -48,6 +48,66 @@ const AGGREGATION_CONFIG = {
   CHECKPOINT_INTERVAL: 10 // Log progress every N files
 };
 
+// ============================================================================
+// CONFIGURATION-DRIVEN REPORT EXPORT CONSTANTS
+// ============================================================================
+
+// Configuration export settings
+const REPORT_CONFIG = {
+  // Sheet names
+  REPORT_CONFIG_SHEET_NAME: "Report Configs",
+  
+  // Column indices for Report Configs sheet (A=0, B=1, etc.)
+  CONFIG_COLUMNS: {
+    REPORT_NAME: 0,     // A: Report Name
+    DESCRIPTION: 1,     // B: Description
+    COLUMNS: 2,         // C: Columns (comma-separated)
+    FILTERS: 3,         // D: Filters (key=value pairs)
+    SORT_BY: 4,         // E: Sort By
+    SORT_ORDER: 5,      // F: Sort Order (ASC/DESC)
+    SUMMARY_TYPE: 6,    // G: Summary Type (SUM/COUNT/AVG/NONE)
+    ENABLED: 7          // H: Enabled (TRUE/FALSE)
+  },
+  
+  // Validation limits
+  MAX_REPORT_NAME_LENGTH: 50,
+  MAX_DESCRIPTION_LENGTH: 200,
+  
+  // Valid enumeration values
+  VALID_SORT_ORDERS: ['ASC', 'DESC'],
+  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS'],
+  
+  // Column name mappings from aggregated data to display names
+  COLUMN_MAPPINGS: {
+    'Member Name': 'memberName',
+    'PAV ID': 'pavId',
+    'Date': 'date',
+    'Start Time': 'startTime', 
+    'End Time': 'endTime',
+    'Hours': 'hours',
+    'Total Hours': 'totalHours',
+    'Project Name': 'project',
+    'Task Description': 'description',
+    'Status': 'status',
+    'Department': 'department',
+    'Role': 'role'
+  },
+  
+  // Filter operators (order matters - longer operators first)
+  FILTER_OPERATORS: ['>=', '<=', '!=', '=', '>', '<', 'contains'],
+  
+  // Export settings
+  MAX_PROCESSING_TIME_MS: 300000, // 5 minutes maximum
+  PROGRESS_UPDATE_INTERVAL_MS: 30000, // Show progress every 30 seconds
+  BATCH_SIZE: 1000, // Process data in chunks
+  
+  // Sheet structure for generated reports
+  REPORT_SHEETS: {
+    DATA_SHEET: "Report Data",
+    INFO_SHEET: "Report Info"
+  }
+};
+
 // Error types for consistent error handling
 const ERROR_TYPES = {
   FOLDER_NOT_FOUND: 'FOLDER_NOT_FOUND',
@@ -59,7 +119,16 @@ const ERROR_TYPES = {
   RETRY_ATTEMPT: 'RETRY_ATTEMPT',
   MEMORY_CONSTRAINT: 'MEMORY_CONSTRAINT',
   SYSTEM_FAILURE: 'SYSTEM_FAILURE',
-  TIMEOUT_WARNING: 'TIMEOUT_WARNING'
+  TIMEOUT_WARNING: 'TIMEOUT_WARNING',
+  
+  // Configuration export specific errors
+  CONFIG_SHEET_NOT_FOUND: 'CONFIG_SHEET_NOT_FOUND',
+  CONFIG_VALIDATION_ERROR: 'CONFIG_VALIDATION_ERROR',
+  CONFIG_DUPLICATE_NAME: 'CONFIG_DUPLICATE_NAME',
+  REPORT_GENERATION_ERROR: 'REPORT_GENERATION_ERROR',
+  EXPORT_ERROR: 'EXPORT_ERROR',
+  FILTER_ERROR: 'FILTER_ERROR',
+  COLUMN_NOT_FOUND: 'COLUMN_NOT_FOUND'
 };
 
 // Severity levels
@@ -2967,6 +3036,8 @@ function onOpen() {
     ui.createMenu('Custom Menu')
       .addItem('Generate Timesheet Files', 'generateTimesheetFiles')
       .addItem('Aggregate Monthly Timesheets', 'aggregateMonthlyTimesheetsUI')
+      .addSeparator()
+      .addItem('Export Configurable Report', 'exportConfigurableReportUI')
       .addToUi();
 }
 
@@ -3072,4 +3143,1772 @@ function createTimesheetFile(folder, member, time) {
   const newFile = templateFile.makeCopy(fileName, folder);
   //move new file to folder
   newFile.moveTo(folder);
+}
+
+// ============================================================================
+// CONFIGURATION-DRIVEN REPORT EXPORT FUNCTIONS
+// ============================================================================
+
+/**
+ * Read and validate report configurations from the "Report Configs" sheet
+ * @returns {Object} Result object with success status, configurations array, and errors
+ */
+function readReportConfigurations() {
+  try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    let configSheet;
+    
+    try {
+      configSheet = spreadsheet.getSheetByName(REPORT_CONFIG.REPORT_CONFIG_SHEET_NAME);
+    } catch (error) {
+      const setupMessage = generateSetupAssistanceMessage();
+      return {
+        success: false,
+        configurations: [],
+        errors: [
+          `Sheet "${REPORT_CONFIG.REPORT_CONFIG_SHEET_NAME}" not found.`,
+          '',
+          'SETUP REQUIRED:',
+          setupMessage
+        ]
+      };
+    }
+    
+    // Validate sheet structure first
+    const structureValidation = validateConfigurationSheetStructure(configSheet);
+    if (!structureValidation.isValid) {
+      let errorMessages = [...structureValidation.errors];
+      if (structureValidation.setupGuidance.length > 0) {
+        errorMessages.push('');
+        errorMessages.push('SETUP GUIDANCE:');
+        errorMessages.push(...structureValidation.setupGuidance);
+      }
+      if (structureValidation.warnings.length > 0) {
+        errorMessages.push('');
+        errorMessages.push('WARNINGS:');
+        errorMessages.push(...structureValidation.warnings);
+      }
+      return {
+        success: false,
+        configurations: [],
+        errors: errorMessages
+      };
+    }
+    
+    // Get all data from the sheet
+    const data = configSheet.getDataRange().getDisplayValues();
+    
+    if (data.length <= 1) {
+      return {
+        success: false,
+        configurations: [],
+        errors: [
+          'Configuration sheet is empty. Please add at least one configuration row.',
+          '',
+          'QUICK START:',
+          'Add a row with these example values:',
+          'Weekly Summary | Team member hours summary | Member Name,Total Hours,Date | | Member Name | ASC | NONE | TRUE'
+        ]
+      };
+    }
+    
+    // Skip header row and process configurations
+    const configurations = [];
+    const errors = [];
+    const reportNames = new Set();
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const rowNum = i + 1;
+      
+      // Skip empty rows
+      if (!row[REPORT_CONFIG.CONFIG_COLUMNS.REPORT_NAME] || 
+          row[REPORT_CONFIG.CONFIG_COLUMNS.REPORT_NAME].trim() === '') {
+        continue;
+      }
+      
+      const config = parseConfigurationRow(row, rowNum);
+      
+      if (config.errors.length > 0) {
+        // Generate user-friendly error messages
+        config.errors.forEach(error => {
+          const userFriendlyError = generateUserFriendlyErrorMessage(
+            ERROR_TYPES.CONFIG_VALIDATION_ERROR,
+            {
+              rowNumber: rowNum,
+              details: error,
+              value: row[REPORT_CONFIG.CONFIG_COLUMNS.REPORT_NAME]
+            }
+          );
+          errors.push(userFriendlyError);
+        });
+        continue;
+      }
+      
+      // Check for duplicate report names
+      if (reportNames.has(config.data.reportName)) {
+        const duplicateError = generateUserFriendlyErrorMessage(
+          ERROR_TYPES.CONFIG_VALIDATION_ERROR,
+          {
+            rowNumber: rowNum,
+            fieldName: 'reportName',
+            details: `Duplicate report name "${config.data.reportName}". Each report must have a unique name.`,
+            value: config.data.reportName
+          }
+        );
+        errors.push(duplicateError);
+        continue;
+      }
+      
+      // Only include enabled configurations
+      if (config.data.enabled) {
+        configurations.push(config.data);
+        reportNames.add(config.data.reportName);
+      }
+    }
+    
+    if (errors.length > 0) {
+      // Add helpful guidance for common errors
+      const guidanceMessages = [
+        '',
+        'COMMON FIXES:',
+        '• Check that all required fields are filled in',
+        '• Ensure column names match available options exactly',
+        '• Verify that Sort By column exists in your Columns list',
+        '• Use exact values: ASC/DESC for Sort Order, TRUE/FALSE for Enabled',
+        '',
+        'Need examples? Check the setup guidance above.'
+      ];
+      
+      return {
+        success: false,
+        configurations: [],
+        errors: [...errors, ...guidanceMessages]
+      };
+    }
+    
+    if (configurations.length === 0) {
+      return {
+        success: false,
+        configurations: [],
+        errors: [
+          'No enabled configurations found.',
+          '',
+          'SOLUTION:',
+          '• Check that at least one configuration has Enabled = TRUE',
+          '• Verify your configurations pass all validation rules',
+          '• Review the setup guidance above for help'
+        ]
+      };
+    }
+    
+    return {
+      success: true,
+      configurations: configurations,
+      errors: []
+    };
+    
+  } catch (error) {
+    Logger.log('Error reading report configurations: ' + error.message);
+    return {
+      success: false,
+      configurations: [],
+      errors: [
+        'System error reading configurations. Please try again.',
+        '',
+        'TECHNICAL DETAILS:',
+        error.message,
+        '',
+        'If this persists, check that:',
+        '• The spreadsheet is accessible',
+        '• You have edit permissions',
+        '• The sheet structure is correct'
+      ]
+    };
+  }
+}
+
+/**
+ * Parse a single configuration row and validate its data
+ * @param {Array} row - Row data from the configuration sheet
+ * @param {number} rowNum - Row number for error reporting
+ * @returns {Object} Parsed configuration data and validation errors
+ */
+function parseConfigurationRow(row, rowNum) {
+  const errors = [];
+  const config = {};
+  
+  // Report Name validation
+  const reportName = row[REPORT_CONFIG.CONFIG_COLUMNS.REPORT_NAME] || '';
+  if (!reportName.trim()) {
+    errors.push('Report Name is required');
+  } else if (reportName.length > REPORT_CONFIG.MAX_REPORT_NAME_LENGTH) {
+    errors.push(`Report Name exceeds ${REPORT_CONFIG.MAX_REPORT_NAME_LENGTH} character limit`);
+  } else {
+    config.reportName = reportName.trim();
+  }
+  
+  // Description validation
+  const description = row[REPORT_CONFIG.CONFIG_COLUMNS.DESCRIPTION] || '';
+  if (!description.trim()) {
+    errors.push('Description is required');
+  } else if (description.length > REPORT_CONFIG.MAX_DESCRIPTION_LENGTH) {
+    errors.push(`Description exceeds ${REPORT_CONFIG.MAX_DESCRIPTION_LENGTH} character limit`);
+  } else {
+    config.description = description.trim();
+  }
+  
+  // Columns validation
+  const columnsText = row[REPORT_CONFIG.CONFIG_COLUMNS.COLUMNS] || '';
+  if (!columnsText.trim()) {
+    errors.push('Columns are required');
+  } else {
+    const columns = columnsText.split(',').map(function(col) {
+      return col.trim();
+    }).filter(function(col) {
+      return col.length > 0;
+    });
+    
+    if (columns.length === 0) {
+      errors.push('At least one column must be specified');
+    } else {
+      // Validate column names against available columns
+      const validColumns = Object.keys(REPORT_CONFIG.COLUMN_MAPPINGS);
+      const invalidColumns = columns.filter(function(col) {
+        return validColumns.indexOf(col) === -1;
+      });
+      
+      if (invalidColumns.length > 0) {
+        errors.push(`Invalid columns: ${invalidColumns.join(', ')}. Valid columns: ${validColumns.join(', ')}`);
+      } else {
+        config.columns = columns;
+      }
+    }
+  }
+  
+  // Filters parsing
+  const filtersText = row[REPORT_CONFIG.CONFIG_COLUMNS.FILTERS] || '';
+  if (filtersText.trim()) {
+    try {
+      config.filters = parseFilters(filtersText);
+    } catch (filterError) {
+      errors.push(`Invalid filter format: ${filterError.message}`);
+    }
+  } else {
+    config.filters = {};
+  }
+  
+  // Sort By validation
+  const sortBy = row[REPORT_CONFIG.CONFIG_COLUMNS.SORT_BY] || '';
+  if (sortBy.trim() && config.columns) {
+    if (config.columns.indexOf(sortBy.trim()) === -1) {
+      errors.push(`Sort By column "${sortBy}" must be included in the Columns list`);
+    } else {
+      config.sortBy = sortBy.trim();
+    }
+  } else if (sortBy.trim()) {
+    config.sortBy = sortBy.trim();
+  }
+  
+  // Sort Order validation
+  const sortOrder = row[REPORT_CONFIG.CONFIG_COLUMNS.SORT_ORDER] || '';
+  if (sortOrder.trim()) {
+    const upperSortOrder = sortOrder.trim().toUpperCase();
+    if (REPORT_CONFIG.VALID_SORT_ORDERS.indexOf(upperSortOrder) === -1) {
+      errors.push(`Sort Order must be one of: ${REPORT_CONFIG.VALID_SORT_ORDERS.join(', ')}`);
+    } else {
+      config.sortOrder = upperSortOrder;
+    }
+  } else {
+    config.sortOrder = 'ASC'; // Default
+  }
+  
+  // Summary Type validation
+  const summaryType = row[REPORT_CONFIG.CONFIG_COLUMNS.SUMMARY_TYPE] || '';
+  if (summaryType.trim()) {
+    const upperSummaryType = summaryType.trim().toUpperCase();
+    if (REPORT_CONFIG.VALID_SUMMARY_TYPES.indexOf(upperSummaryType) === -1) {
+      errors.push(`Summary Type must be one of: ${REPORT_CONFIG.VALID_SUMMARY_TYPES.join(', ')}`);
+    } else {
+      config.summaryType = upperSummaryType;
+    }
+  } else {
+    config.summaryType = 'NONE'; // Default
+  }
+  
+  // Enabled validation
+  const enabledText = row[REPORT_CONFIG.CONFIG_COLUMNS.ENABLED] || '';
+  if (enabledText.toString().trim().toUpperCase() === 'TRUE') {
+    config.enabled = true;
+  } else if (enabledText.toString().trim().toUpperCase() === 'FALSE') {
+    config.enabled = false;
+  } else {
+    errors.push('Enabled must be TRUE or FALSE');
+  }
+  
+  return {
+    data: config,
+    errors: errors
+  };
+}
+
+/**
+ * Parse filter string into object format
+ * @param {string} filtersText - Filter string like "active=true,hours>0"
+ * @returns {Object} Parsed filters object
+ */
+function parseFilters(filtersText) {
+  const filters = {};
+  const filterPairs = filtersText.split(',');
+  
+  for (let i = 0; i < filterPairs.length; i++) {
+    const pair = filterPairs[i].trim();
+    if (!pair) continue;
+    
+    // Find operator
+    let operator = null;
+    let operatorIndex = -1;
+    
+    for (let j = 0; j < REPORT_CONFIG.FILTER_OPERATORS.length; j++) {
+      const op = REPORT_CONFIG.FILTER_OPERATORS[j];
+      const index = pair.indexOf(op);
+      if (index > 0) { // Must not be at the start
+        operator = op;
+        operatorIndex = index;
+        break;
+      }
+    }
+    
+    if (!operator) {
+      throw new Error(`Invalid filter "${pair}". Expected format: column=value or column>value`);
+    }
+    
+    const key = pair.substring(0, operatorIndex).trim();
+    const value = pair.substring(operatorIndex + operator.length).trim();
+    
+    if (!key || !value) {
+      throw new Error(`Invalid filter "${pair}". Both column and value are required`);
+    }
+    
+    // Store with operator
+    filters[key] = {
+      operator: operator,
+      value: value
+    };
+  }
+  
+  return filters;
+}
+
+// ============================================================================
+// CONFIGURATION VALIDATION HELPERS (Enhanced User-Friendly Error Messages)
+// ============================================================================
+
+/**
+ * Validate configuration sheet structure and provide user-friendly setup guidance
+ * @param {Object} sheet - Google Sheets sheet object
+ * @returns {Object} Validation result with user guidance
+ */
+function validateConfigurationSheetStructure(sheet) {
+  try {
+    const errors = [];
+    const warnings = [];
+    
+    // Check if sheet exists
+    if (!sheet) {
+      return {
+        isValid: false,
+        errors: ['Configuration sheet "Report Configs" not found. Please create this sheet first.'],
+        setupGuidance: [
+          '1. Right-click on the sheet tabs at the bottom',
+          '2. Select "Insert sheet"', 
+          '3. Name the new sheet "Report Configs"',
+          '4. Add the following column headers in row 1:',
+          '   A: Report Name, B: Description, C: Columns, D: Filters, E: Sort By, F: Sort Order, G: Summary Type, H: Enabled'
+        ]
+      };
+    }
+    
+    // Check if sheet has data
+    const data = sheet.getDataRange().getDisplayValues();
+    if (data.length === 0) {
+      return {
+        isValid: false,
+        errors: ['Configuration sheet is completely empty.'],
+        setupGuidance: [
+          'Please add a header row with the following columns:',
+          'A: Report Name, B: Description, C: Columns, D: Filters, E: Sort By, F: Sort Order, G: Summary Type, H: Enabled',
+          '',
+          'Then add at least one configuration row below the headers.'
+        ]
+      };
+    }
+    
+    // Check header row
+    if (data.length === 1) {
+      warnings.push('Only header row found. Please add at least one configuration row.');
+    }
+    
+    // Validate expected column count
+    const headerRow = data[0];
+    const expectedColumns = Object.keys(REPORT_CONFIG.CONFIG_COLUMNS).length;
+    
+    if (headerRow.length < expectedColumns) {
+      errors.push(`Configuration sheet has ${headerRow.length} columns but needs ${expectedColumns} columns.`);
+    }
+    
+    // Check for reasonable header names
+    const expectedHeaders = ['Report Name', 'Description', 'Columns', 'Filters', 'Sort By', 'Sort Order', 'Summary Type', 'Enabled'];
+    const headerWarnings = [];
+    
+    for (let i = 0; i < Math.min(expectedHeaders.length, headerRow.length); i++) {
+      const actual = headerRow[i].trim().toLowerCase();
+      const expected = expectedHeaders[i].toLowerCase();
+      
+      if (actual !== expected && actual !== expected.replace(/\s+/g, '')) {
+        headerWarnings.push(`Column ${String.fromCharCode(65 + i)} header "${headerRow[i]}" should probably be "${expectedHeaders[i]}"`);
+      }
+    }
+    
+    if (headerWarnings.length > 0) {
+      warnings.push(...headerWarnings);
+      warnings.push('Headers don\'t match expected format. This may cause validation errors.');
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors: errors,
+      warnings: warnings,
+      setupGuidance: errors.length > 0 ? [
+        'Expected column headers (in order):',
+        'A: Report Name - Unique name for your report',
+        'B: Description - Brief description of what the report shows', 
+        'C: Columns - Comma-separated list of columns to include',
+        'D: Filters - Optional: column=value pairs (e.g., active=true,hours>0)',
+        'E: Sort By - Column name to sort by (must be in Columns list)',
+        'F: Sort Order - ASC or DESC',
+        'G: Summary Type - NONE, MEMBER_TOTALS, DAILY_TOTALS, or PROJECT_TOTALS',
+        'H: Enabled - TRUE or FALSE'
+      ] : []
+    };
+    
+  } catch (error) {
+    return {
+      isValid: false,
+      errors: [`Error checking configuration sheet: ${error.message}`],
+      setupGuidance: ['Please check if the "Report Configs" sheet is properly formatted.']
+    };
+  }
+}
+
+/**
+ * Generate user-friendly error messages for common configuration mistakes
+ * @param {string} errorType - Type of error from ERROR_TYPES
+ * @param {Object} context - Additional context for error message
+ * @returns {string} User-friendly error message
+ */
+function generateUserFriendlyErrorMessage(errorType, context = {}) {
+  const rowInfo = context.rowNumber ? ` (Row ${context.rowNumber})` : '';
+  const fieldInfo = context.fieldName ? ` in "${context.fieldName}" field` : '';
+  
+  switch (errorType) {
+    case ERROR_TYPES.CONFIG_VALIDATION_ERROR:
+      if (context.fieldName === 'reportName') {
+        return `Report Name${rowInfo}: "${context.value}" is invalid. Report names must be unique, non-empty, and under 50 characters.`;
+      }
+      if (context.fieldName === 'columns') {
+        const validColumns = Object.keys(REPORT_CONFIG.COLUMN_MAPPINGS).join(', ');
+        return `Columns${rowInfo}: Invalid column names. Available columns are: ${validColumns}`;
+      }
+      if (context.fieldName === 'filters') {
+        return `Filters${rowInfo}: Invalid filter format. Use: column=value,column>value (e.g., active=true,hours>0)`;
+      }
+      if (context.fieldName === 'sortOrder') {
+        return `Sort Order${rowInfo}: Must be exactly "ASC" or "DESC" (case-sensitive).`;
+      }
+      if (context.fieldName === 'summaryType') {
+        return `Summary Type${rowInfo}: Must be one of: NONE, MEMBER_TOTALS, DAILY_TOTALS, PROJECT_TOTALS (case-sensitive).`;
+      }
+      if (context.fieldName === 'enabled') {
+        return `Enabled${rowInfo}: Must be exactly "TRUE" or "FALSE" (case-sensitive).`;
+      }
+      return `Configuration error${rowInfo}${fieldInfo}: ${context.details || 'Invalid value'}`;
+      
+    case ERROR_TYPES.FILTER_ERROR:
+      return `Filter Error${rowInfo}: ${context.details || 'Invalid filter expression. Use format: column=value,column>value'}`;
+      
+    case ERROR_TYPES.REPORT_GENERATION_ERROR:
+      return `Report Generation Error: ${context.details || 'Unable to generate report with current configuration'}`;
+      
+    case ERROR_TYPES.EXPORT_ERROR:
+      return `Export Error: ${context.details || 'Unable to export report to Google Sheets'}`;
+      
+    default:
+      return `Error${rowInfo}${fieldInfo}: ${context.details || 'An unexpected error occurred'}`;
+  }
+}
+
+/**
+ * Create helpful configuration examples for users
+ * @returns {Array} Array of example configuration objects with explanations
+ */
+function createConfigurationExamples() {
+  return [
+    {
+      title: 'Basic Weekly Summary Report',
+      explanation: 'Shows all timesheet data grouped by member for the current period',
+      config: {
+        reportName: 'Weekly Team Summary',
+        description: 'Summary of all team member hours for the week',
+        columns: 'Member Name,Total Hours,Date',
+        filters: '',
+        sortBy: 'Member Name',
+        sortOrder: 'ASC',
+        summaryType: 'NONE',
+        enabled: 'TRUE'
+      }
+    },
+    {
+      title: 'Active Members Only with Hour Filtering',
+      explanation: 'Shows only active members who logged more than 0 hours',
+      config: {
+        reportName: 'Active Members Report',
+        description: 'Active team members with recorded hours',
+        columns: 'Member Name,Total Hours,Status',
+        filters: 'active=true,hours>0',
+        sortBy: 'Total Hours',
+        sortOrder: 'DESC',
+        summaryType: 'MEMBER_TOTALS',
+        enabled: 'TRUE'
+      }
+    },
+    {
+      title: 'Project-Based Summary',
+      explanation: 'Groups timesheet data by project for project managers',
+      config: {
+        reportName: 'Project Hours Summary',
+        description: 'Total hours spent on each project',
+        columns: 'Project Name,Total Hours,Member Count',
+        filters: '',
+        sortBy: 'Total Hours',
+        sortOrder: 'DESC',
+        summaryType: 'PROJECT_TOTALS',
+        enabled: 'TRUE'
+      }
+    }
+  ];
+}
+
+/**
+ * Generate setup assistance message for new users
+ * @returns {string} Comprehensive setup guide
+ */
+function generateSetupAssistanceMessage() {
+  const examples = createConfigurationExamples();
+  
+  let message = 'Configuration Export Setup Guide\n\n';
+  message += '1. CREATE CONFIGURATION SHEET:\n';
+  message += '   • Right-click on sheet tabs → Insert sheet\n';
+  message += '   • Name it exactly: "Report Configs"\n\n';
+  
+  message += '2. ADD COLUMN HEADERS (Row 1):\n';
+  message += '   A: Report Name\n';
+  message += '   B: Description\n';
+  message += '   C: Columns\n';
+  message += '   D: Filters\n';
+  message += '   E: Sort By\n';
+  message += '   F: Sort Order\n';
+  message += '   G: Summary Type\n';
+  message += '   H: Enabled\n\n';
+  
+  message += '3. EXAMPLE CONFIGURATIONS:\n\n';
+  
+  examples.forEach((example, index) => {
+    message += `Example ${index + 1}: ${example.title}\n`;
+    message += `Purpose: ${example.explanation}\n`;
+    message += `Configuration values:\n`;
+    Object.entries(example.config).forEach(([key, value]) => {
+      message += `  ${key}: ${value}\n`;
+    });
+    message += '\n';
+  });
+  
+  message += '4. AVAILABLE COLUMNS:\n';
+  message += '   ' + Object.keys(REPORT_CONFIG.COLUMN_MAPPINGS).join(', ') + '\n\n';
+  
+  message += '5. FILTER FORMAT:\n';
+  message += '   • column=value (exact match)\n';
+  message += '   • column>value (greater than)\n';
+  message += '   • column<value (less than)\n';
+  message += '   • Multiple filters: active=true,hours>0\n\n';
+  
+  message += '6. SUMMARY TYPES:\n';
+  message += '   • NONE: Show individual records\n';
+  message += '   • MEMBER_TOTALS: Group by team member\n';
+  message += '   • DAILY_TOTALS: Group by date\n';
+  message += '   • PROJECT_TOTALS: Group by project\n';
+  
+  return message;
+}
+
+/**
+ * Generate a configurable report from aggregated timesheet data
+ * @param {Array} aggregatedData - Array of aggregated timesheet objects
+ * @param {Object} configuration - Report configuration object
+ * @returns {Object} Result object with success status, report data, and errors
+ */
+function generateConfigurableReport(aggregatedData, configuration) {
+  try {
+    // Input validation
+    if (!Array.isArray(aggregatedData)) {
+      return {
+        success: false,
+        reportData: [],
+        metadata: {},
+        errors: ['Aggregated data must be an array']
+      };
+    }
+    
+    if (!configuration || typeof configuration !== 'object') {
+      return {
+        success: false,
+        reportData: [],
+        metadata: {},
+        errors: ['Configuration must be a valid object']
+      };
+    }
+    
+    if (!configuration.columns || !Array.isArray(configuration.columns)) {
+      return {
+        success: false,
+        reportData: [],
+        metadata: {},
+        errors: ['Configuration must include a valid columns array']
+      };
+    }
+    
+    // Memory management for large datasets
+    const BATCH_SIZE = 1000; // Process data in chunks to avoid memory issues
+    const MAX_MEMORY_RECORDS = 10000; // Warning threshold for large datasets
+    
+    if (aggregatedData.length > MAX_MEMORY_RECORDS) {
+      Logger.log(`Warning: Processing large dataset with ${aggregatedData.length} records. This may take longer than usual.`);
+    }
+    
+    // Filter data based on configuration filters (with batching for large datasets)
+    let filteredData;
+    if (aggregatedData.length > BATCH_SIZE) {
+      filteredData = applyFiltersBatched(aggregatedData, configuration.filters || {}, BATCH_SIZE);
+    } else {
+      filteredData = applyFilters(aggregatedData, configuration.filters || {});
+    }
+    
+    if (filteredData.length === 0) {
+      return {
+        success: true,
+        reportData: [],
+        metadata: {
+          reportName: configuration.reportName,
+          description: configuration.description,
+          totalRecords: 0,
+          generatedAt: new Date().toISOString(),
+          columns: configuration.columns,
+          appliedFilters: configuration.filters || {}
+        },
+        errors: []
+      };
+    }
+    
+    // Transform data to include only requested columns (with batching)
+    let transformedData;
+    if (filteredData.length > BATCH_SIZE) {
+      transformedData = transformDataColumnsBatched(filteredData, configuration.columns, BATCH_SIZE);
+    } else {
+      transformedData = transformDataColumns(filteredData, configuration.columns);
+    }
+    
+    // Sort data if sort configuration is provided
+    if (configuration.sortBy) {
+      sortReportData(transformedData, configuration.sortBy, configuration.sortOrder || 'ASC');
+    }
+    
+    // Apply summary aggregation if requested
+    let finalData = transformedData;
+    if (configuration.summaryType && configuration.summaryType !== 'NONE') {
+      finalData = applySummaryAggregation(transformedData, configuration.summaryType);
+    }
+    
+    // Generate metadata
+    const metadata = {
+      reportName: configuration.reportName,
+      description: configuration.description,
+      totalRecords: finalData.length,
+      originalRecords: aggregatedData.length,
+      filteredRecords: filteredData.length,
+      generatedAt: new Date().toISOString(),
+      columns: configuration.columns,
+      appliedFilters: configuration.filters || {},
+      sortBy: configuration.sortBy || null,
+      sortOrder: configuration.sortOrder || 'ASC',
+      summaryType: configuration.summaryType || 'NONE',
+      processingInfo: {
+        usedBatching: aggregatedData.length > BATCH_SIZE,
+        batchSize: BATCH_SIZE,
+        isLargeDataset: aggregatedData.length > MAX_MEMORY_RECORDS
+      }
+    };
+    
+    return {
+      success: true,
+      reportData: finalData,
+      metadata: metadata,
+      errors: []
+    };
+    
+  } catch (error) {
+    Logger.log('Error generating configurable report: ' + error.message);
+    return {
+      success: false,
+      reportData: [],
+      metadata: {},
+      errors: [`System error generating report: ${error.message}`]
+    };
+  }
+}
+
+/**
+ * Apply filters to data using batched processing for large datasets
+ * @param {Array} data - Data to filter
+ * @param {Object} filters - Filter configuration object
+ * @param {number} batchSize - Size of each processing batch
+ * @returns {Array} Filtered data
+ */
+function applyFiltersBatched(data, filters, batchSize) {
+  if (!filters || Object.keys(filters).length === 0) {
+    return data;
+  }
+  
+  const filteredResults = [];
+  
+  // Process data in batches to manage memory
+  for (let i = 0; i < data.length; i += batchSize) {
+    const batch = data.slice(i, i + batchSize);
+    const filteredBatch = applyFilters(batch, filters);
+    filteredResults.push(...filteredBatch);
+    
+    // Force garbage collection hint for large datasets
+    if (i % (batchSize * 5) === 0 && data.length > 5000) {
+      Logger.log(`Processed ${i + batch.length}/${data.length} records...`);
+    }
+  }
+  
+  return filteredResults;
+}
+
+/**
+ * Transform data columns using batched processing for large datasets
+ * @param {Array} data - Data to transform
+ * @param {Array} columns - Column names to include
+ * @param {number} batchSize - Size of each processing batch
+ * @returns {Array} Transformed data
+ */
+function transformDataColumnsBatched(data, columns, batchSize) {
+  const transformedResults = [];
+  
+  // Process data in batches to manage memory
+  for (let i = 0; i < data.length; i += batchSize) {
+    const batch = data.slice(i, i + batchSize);
+    const transformedBatch = transformDataColumns(batch, columns);
+    transformedResults.push(...transformedBatch);
+    
+    // Memory management logging for large datasets
+    if (i % (batchSize * 5) === 0 && data.length > 5000) {
+      Logger.log(`Transformed ${i + batch.length}/${data.length} records...`);
+    }
+  }
+  
+  return transformedResults;
+}
+
+/**
+ * Apply filters to the aggregated data
+ * @param {Array} data - Data to filter
+ * @param {Object} filters - Filter configuration object
+ * @returns {Array} Filtered data
+ */
+function applyFilters(data, filters) {
+  if (!filters || Object.keys(filters).length === 0) {
+    return data;
+  }
+  
+  return data.filter(function(record) {
+    for (const filterKey in filters) {
+      if (!filters.hasOwnProperty(filterKey)) continue;
+      
+      const filter = filters[filterKey];
+      const operator = filter.operator;
+      const filterValue = filter.value;
+      
+      // Get the actual data field using column mapping
+      const dataField = REPORT_CONFIG.COLUMN_MAPPINGS[filterKey];
+      if (!dataField) {
+        // Skip invalid filter keys
+        continue;
+      }
+      
+      const recordValue = getNestedValue(record, dataField);
+      
+      // Apply filter based on operator
+      if (!applyFilterCondition(recordValue, operator, filterValue)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+/**
+ * Apply a single filter condition
+ * @param {any} recordValue - Value from the record
+ * @param {string} operator - Filter operator
+ * @param {string} filterValue - Filter value
+ * @returns {boolean} Whether the condition passes
+ */
+function applyFilterCondition(recordValue, operator, filterValue) {
+  // Convert values for comparison
+  const strRecordValue = String(recordValue || '').toLowerCase();
+  const strFilterValue = String(filterValue).toLowerCase();
+  
+  switch (operator) {
+    case '=':
+      return strRecordValue === strFilterValue;
+    case '!=':
+      return strRecordValue !== strFilterValue;
+    case '>':
+      return parseFloat(recordValue) > parseFloat(filterValue);
+    case '<':
+      return parseFloat(recordValue) < parseFloat(filterValue);
+    case '>=':
+      return parseFloat(recordValue) >= parseFloat(filterValue);
+    case '<=':
+      return parseFloat(recordValue) <= parseFloat(filterValue);
+    case 'contains':
+      return strRecordValue.indexOf(strFilterValue) !== -1;
+    default:
+      return true;
+  }
+}
+
+/**
+ * Transform data to include only specified columns
+ * @param {Array} data - Data to transform
+ * @param {Array} columns - Column names to include
+ * @returns {Array} Transformed data
+ */
+function transformDataColumns(data, columns) {
+  return data.map(function(record) {
+    const transformedRecord = {};
+    
+    for (let i = 0; i < columns.length; i++) {
+      const columnName = columns[i];
+      const dataField = REPORT_CONFIG.COLUMN_MAPPINGS[columnName];
+      
+      if (dataField) {
+        transformedRecord[columnName] = getNestedValue(record, dataField);
+      } else {
+        transformedRecord[columnName] = null;
+      }
+    }
+    
+    return transformedRecord;
+  });
+}
+
+/**
+ * Sort report data by specified column and order
+ * @param {Array} data - Data to sort (modified in place)
+ * @param {string} sortBy - Column to sort by
+ * @param {string} sortOrder - 'ASC' or 'DESC'
+ */
+function sortReportData(data, sortBy, sortOrder) {
+  data.sort(function(a, b) {
+    const aValue = a[sortBy];
+    const bValue = b[sortBy];
+    
+    // Handle null/undefined values
+    if (aValue == null && bValue == null) return 0;
+    if (aValue == null) return sortOrder === 'ASC' ? 1 : -1;
+    if (bValue == null) return sortOrder === 'ASC' ? -1 : 1;
+    
+    // Try numeric comparison first
+    const aNum = parseFloat(aValue);
+    const bNum = parseFloat(bValue);
+    
+    if (!isNaN(aNum) && !isNaN(bNum)) {
+      const numComparison = aNum - bNum;
+      return sortOrder === 'ASC' ? numComparison : -numComparison;
+    }
+    
+    // String comparison
+    const strComparison = String(aValue).localeCompare(String(bValue));
+    return sortOrder === 'ASC' ? strComparison : -strComparison;
+  });
+}
+
+/**
+ * Apply summary aggregation to the data
+ * @param {Array} data - Data to aggregate
+ * @param {string} summaryType - Type of summary ('MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS')
+ * @returns {Array} Aggregated data
+ */
+function applySummaryAggregation(data, summaryType) {
+  switch (summaryType) {
+    case 'MEMBER_TOTALS':
+      return aggregateByMember(data);
+    case 'DAILY_TOTALS':
+      return aggregateByDaily(data);
+    case 'PROJECT_TOTALS':
+      return aggregateByProject(data);
+    default:
+      return data;
+  }
+}
+
+/**
+ * Aggregate data by member
+ * @param {Array} data - Data to aggregate
+ * @returns {Array} Aggregated data by member
+ */
+function aggregateByMember(data) {
+  const memberTotals = {};
+  
+  for (let i = 0; i < data.length; i++) {
+    const record = data[i];
+    const memberName = record['Member Name'] || record.memberName || 'Unknown Member';
+    
+    if (!memberTotals[memberName]) {
+      memberTotals[memberName] = {
+        'Member Name': memberName,
+        'Total Hours': 0,
+        'Record Count': 0
+      };
+      
+      // Copy non-aggregatable fields from first occurrence
+      for (const key in record) {
+        if (record.hasOwnProperty(key) && 
+            key !== 'Hours' && 
+            key !== 'Total Hours' &&
+            key !== 'Date' &&
+            key !== 'Record Count') {
+          memberTotals[memberName][key] = record[key];
+        }
+      }
+    }
+    
+    // Aggregate numeric values
+    const hours = parseFloat(record['Hours'] || record['Total Hours'] || record.hours || record.totalHours || 0);
+    memberTotals[memberName]['Total Hours'] += hours;
+    memberTotals[memberName]['Record Count'] += 1;
+  }
+  
+  return Object.values(memberTotals);
+}
+
+/**
+ * Aggregate data by daily totals
+ * @param {Array} data - Data to aggregate
+ * @returns {Array} Aggregated data by date
+ */
+function aggregateByDaily(data) {
+  const dailyTotals = {};
+  
+  for (let i = 0; i < data.length; i++) {
+    const record = data[i];
+    const date = record['Date'] || record.date || 'Unknown Date';
+    
+    if (!dailyTotals[date]) {
+      dailyTotals[date] = {
+        'Date': date,
+        'Total Hours': 0,
+        'Member Count': 0,
+        'Record Count': 0
+      };
+    }
+    
+    const hours = parseFloat(record['Hours'] || record['Total Hours'] || record.hours || record.totalHours || 0);
+    dailyTotals[date]['Total Hours'] += hours;
+    dailyTotals[date]['Record Count'] += 1;
+  }
+  
+  // Count unique members per day
+  const membersByDate = {};
+  for (let i = 0; i < data.length; i++) {
+    const record = data[i];
+    const date = record['Date'] || record.date || 'Unknown Date';
+    const memberName = record['Member Name'] || record.memberName || 'Unknown Member';
+    
+    if (!membersByDate[date]) {
+      membersByDate[date] = new Set();
+    }
+    membersByDate[date].add(memberName);
+  }
+  
+  for (const date in dailyTotals) {
+    if (dailyTotals.hasOwnProperty(date)) {
+      dailyTotals[date]['Member Count'] = membersByDate[date] ? membersByDate[date].size : 0;
+    }
+  }
+  
+  return Object.values(dailyTotals);
+}
+
+/**
+ * Aggregate data by project totals  
+ * @param {Array} data - Data to aggregate
+ * @returns {Array} Aggregated data by project
+ */
+function aggregateByProject(data) {
+  const projectTotals = {};
+  
+  for (let i = 0; i < data.length; i++) {
+    const record = data[i];
+    const projectName = record['Project Name'] || record.project || record.projectName || 'Unknown Project';
+    
+    if (!projectTotals[projectName]) {
+      projectTotals[projectName] = {
+        'Project Name': projectName,
+        'Total Hours': 0,
+        'Member Count': 0,
+        'Record Count': 0
+      };
+    }
+    
+    const hours = parseFloat(record['Hours'] || record['Total Hours'] || record.hours || record.totalHours || 0);
+    projectTotals[projectName]['Total Hours'] += hours;
+    projectTotals[projectName]['Record Count'] += 1;
+  }
+  
+  // Count unique members per project
+  const membersByProject = {};
+  for (let i = 0; i < data.length; i++) {
+    const record = data[i];
+    const projectName = record['Project Name'] || record.project || record.projectName || 'Unknown Project';
+    const memberName = record['Member Name'] || record.memberName || 'Unknown Member';
+    
+    if (!membersByProject[projectName]) {
+      membersByProject[projectName] = new Set();
+    }
+    membersByProject[projectName].add(memberName);
+  }
+  
+  for (const projectName in projectTotals) {
+    if (projectTotals.hasOwnProperty(projectName)) {
+      projectTotals[projectName]['Member Count'] = membersByProject[projectName] ? membersByProject[projectName].size : 0;
+    }
+  }
+  
+  return Object.values(projectTotals);
+}
+
+/**
+ * Get nested value from object using dot notation
+ * @param {Object} obj - Object to get value from
+ * @param {string} path - Dot notation path
+ * @returns {any} Value at the path
+ */
+function getNestedValue(obj, path) {
+  if (!obj || !path) return null;
+  
+  const keys = path.split('.');
+  let current = obj;
+  
+  for (let i = 0; i < keys.length; i++) {
+    if (current == null || typeof current !== 'object') {
+      return null;
+    }
+    current = current[keys[i]];
+  }
+  
+  return current;
+}
+
+/**
+ * Export report data to a Google Sheets file
+ * @param {Array} reportData - Array of report data objects
+ * @param {Object} metadataOrConfig - Report metadata object or configuration object
+ * @param {string|Object} outputLocationOrFolder - 'new_file', 'current_sheet', or folder object
+ * @returns {Object} Result object with success status, file info, and errors
+ */
+function exportReportToGoogleSheets(reportData, metadataOrConfig, outputLocationOrFolder) {
+  try {
+    // Handle both new signature (metadata, outputLocation) and legacy signature (config, folder)
+    let metadata, outputLocation;
+    
+    if (typeof outputLocationOrFolder === 'string') {
+      // New signature: (reportData, metadata, outputLocation)
+      metadata = metadataOrConfig;
+      outputLocation = outputLocationOrFolder;
+    } else {
+      // Legacy signature: (reportData, config, folder) - convert to new format
+      const config = metadataOrConfig;
+      metadata = {
+        reportName: config.reportName,
+        description: config.description,
+        totalRecords: Array.isArray(reportData) ? reportData.length : 0,
+        generatedAt: new Date().toISOString(),
+        columns: config.columns || [],
+        appliedFilters: config.filters || {},
+        sortBy: config.sortBy || null,
+        sortOrder: config.sortOrder || 'ASC',
+        summaryType: config.summaryType || 'NONE'
+      };
+      outputLocation = 'new_file'; // Default for legacy calls
+    }
+    
+    // Input validation
+    if (!Array.isArray(reportData)) {
+      return {
+        success: false,
+        fileId: null,
+        fileName: null,
+        sheetName: null,
+        errors: ['Report data must be an array']
+      };
+    }
+    
+    if (!metadata || typeof metadata !== 'object') {
+      return {
+        success: false,
+        fileId: null,
+        fileName: null,
+        sheetName: null,
+        errors: ['Metadata must be a valid object']
+      };
+    }
+    
+    if (!outputLocation || (outputLocation !== 'new_file' && outputLocation !== 'current_sheet')) {
+      outputLocation = 'new_file'; // Default fallback
+    }
+    
+    // Handle empty data case
+    if (reportData.length === 0) {
+      return exportEmptyReport(metadata, outputLocation);
+    }
+    
+    // Prepare data for export
+    const exportData = prepareExportData(reportData, metadata);
+    
+    // Export based on location preference
+    if (outputLocation === 'new_file') {
+      return exportToNewFile(exportData, metadata);
+    } else {
+      return exportToCurrentSheet(exportData, metadata);
+    }
+    
+  } catch (error) {
+    console.error('Error exporting report to Google Sheets:', error);
+    return {
+      success: false,
+      fileId: null,
+      fileName: null,
+      sheetName: null,
+      errors: [`System error during export: ${error.message}`]
+    };
+  }
+}
+
+/**
+ * Export empty report with metadata only
+ * @param {Object} metadata - Report metadata
+ * @param {string} outputLocation - Export location
+ * @returns {Object} Export result
+ */
+function exportEmptyReport(metadata, outputLocation) {
+  const emptyData = [
+    ['Report Name', metadata.reportName],
+    ['Description', metadata.description],
+    ['Generated At', metadata.generatedAt],
+    ['Total Records', '0'],
+    ['Status', 'No data matches the specified criteria'],
+    [''],
+    ['Column Headers', metadata.columns ? metadata.columns.join(', ') : 'None specified']
+  ];
+  
+  if (outputLocation === 'new_file') {
+    return createNewFileWithData(emptyData, metadata.reportName + ' (Empty)', 'Empty Report');
+  } else {
+    return addToCurrentSheet(emptyData, metadata.reportName + ' (Empty)');
+  }
+}
+
+/**
+ * Prepare data for export including headers and metadata
+ * @param {Array} reportData - Report data to export
+ * @param {Object} metadata - Report metadata
+ * @returns {Array} 2D array ready for sheet export
+ */
+function prepareExportData(reportData, metadata) {
+  const exportData = [];
+  
+  // Add metadata header section
+  exportData.push(['Report Name', metadata.reportName]);
+  exportData.push(['Description', metadata.description]);
+  exportData.push(['Generated At', metadata.generatedAt]);
+  exportData.push(['Total Records', metadata.totalRecords.toString()]);
+  
+  if (metadata.originalRecords !== undefined) {
+    exportData.push(['Original Records', metadata.originalRecords.toString()]);
+    exportData.push(['Filtered Records', metadata.filteredRecords.toString()]);
+  }
+  
+  if (metadata.sortBy) {
+    exportData.push(['Sorted By', `${metadata.sortBy} (${metadata.sortOrder})`]);
+  }
+  
+  if (metadata.summaryType && metadata.summaryType !== 'NONE') {
+    exportData.push(['Summary Type', metadata.summaryType]);
+  }
+  
+  if (metadata.appliedFilters && Object.keys(metadata.appliedFilters).length > 0) {
+    const filterStrings = [];
+    for (const key in metadata.appliedFilters) {
+      if (metadata.appliedFilters.hasOwnProperty(key)) {
+        const filter = metadata.appliedFilters[key];
+        filterStrings.push(`${key} ${filter.operator} ${filter.value}`);
+      }
+    }
+    exportData.push(['Applied Filters', filterStrings.join(', ')]);
+  }
+  
+  // Add separator
+  exportData.push(['']);
+  
+  // Add data section
+  if (reportData.length > 0) {
+    // Extract column headers from first record
+    const headers = Object.keys(reportData[0]);
+    exportData.push(headers);
+    
+    // Add data rows
+    for (let i = 0; i < reportData.length; i++) {
+      const record = reportData[i];
+      const row = [];
+      for (let j = 0; j < headers.length; j++) {
+        const value = record[headers[j]];
+        row.push(value != null ? value.toString() : '');
+      }
+      exportData.push(row);
+    }
+  }
+  
+  return exportData;
+}
+
+/**
+ * Export data to a new Google Sheets file
+ * @param {Array} exportData - 2D array of data to export
+ * @param {Object} metadata - Report metadata
+ * @returns {Object} Export result with file information
+ */
+function exportToNewFile(exportData, metadata) {
+  try {
+    // Create new spreadsheet
+    const fileName = `${metadata.reportName}_${formatDateForFilename(new Date())}`;
+    const newSpreadsheet = SpreadsheetApp.create(fileName);
+    const sheet = newSpreadsheet.getActiveSheet();
+    
+    // Rename the default sheet
+    sheet.setName(metadata.reportName);
+    
+    // Write data to sheet with batch processing for large datasets
+    if (exportData.length > 0) {
+      const WRITE_BATCH_SIZE = 1000; // Google Sheets API limit considerations
+      
+      if (exportData.length > WRITE_BATCH_SIZE) {
+        // Large dataset - write in batches
+        const maxColumns = getMaxColumns(exportData);
+        let currentRow = 1;
+        
+        for (let i = 0; i < exportData.length; i += WRITE_BATCH_SIZE) {
+          const batch = exportData.slice(i, i + WRITE_BATCH_SIZE);
+          const range = sheet.getRange(currentRow, 1, batch.length, maxColumns);
+          range.setValues(batch);
+          currentRow += batch.length;
+          
+          // Progress logging for very large exports
+          if (exportData.length > 5000 && i % (WRITE_BATCH_SIZE * 3) === 0) {
+            Logger.log(`Exported ${i + batch.length}/${exportData.length} rows to Google Sheets...`);
+          }
+        }
+      } else {
+        // Small dataset - write all at once
+        const range = sheet.getRange(1, 1, exportData.length, getMaxColumns(exportData));
+        range.setValues(exportData);
+      }
+      
+      // Format the sheet
+      formatReportSheet(sheet, exportData, metadata);
+    }
+    
+    // Move file to same folder as current spreadsheet (if possible)
+    try {
+      const currentFile = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId());
+      const parentFolders = currentFile.getParents();
+      if (parentFolders.hasNext()) {
+        const parentFolder = parentFolders.next();
+        const newFile = DriveApp.getFileById(newSpreadsheet.getId());
+        newFile.moveTo(parentFolder);
+      }
+    } catch (moveError) {
+      Logger.log('Could not move file to parent folder: ' + moveError.message);
+      // This is not a critical error, file will remain in root
+    }
+    
+    return {
+      success: true,
+      fileId: newSpreadsheet.getId(),
+      fileName: fileName,
+      sheetName: metadata.reportName,
+      errors: []
+    };
+    
+  } catch (error) {
+    console.error('Error creating new file:', error);
+    return {
+      success: false,
+      fileId: null,
+      fileName: null,
+      sheetName: null,
+      errors: [`Failed to create new file: ${error.message}`]
+    };
+  }
+}
+
+/**
+ * Export data to current spreadsheet as new sheet
+ * @param {Array} exportData - 2D array of data to export
+ * @param {Object} metadata - Report metadata
+ * @returns {Object} Export result with sheet information
+ */
+function exportToCurrentSheet(exportData, metadata) {
+  try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // Generate unique sheet name
+    let sheetName = metadata.reportName;
+    let counter = 1;
+    while (spreadsheet.getSheetByName(sheetName)) {
+      sheetName = `${metadata.reportName}_${counter}`;
+      counter++;
+    }
+    
+    // Create new sheet
+    const sheet = spreadsheet.insertSheet(sheetName);
+    
+    // Write data to sheet with batch processing for large datasets
+    if (exportData.length > 0) {
+      const WRITE_BATCH_SIZE = 1000; // Google Sheets API limit considerations
+      
+      if (exportData.length > WRITE_BATCH_SIZE) {
+        // Large dataset - write in batches
+        const maxColumns = getMaxColumns(exportData);
+        let currentRow = 1;
+        
+        for (let i = 0; i < exportData.length; i += WRITE_BATCH_SIZE) {
+          const batch = exportData.slice(i, i + WRITE_BATCH_SIZE);
+          const range = sheet.getRange(currentRow, 1, batch.length, maxColumns);
+          range.setValues(batch);
+          currentRow += batch.length;
+          
+          // Progress logging for very large exports
+          if (exportData.length > 5000 && i % (WRITE_BATCH_SIZE * 3) === 0) {
+            Logger.log(`Exported ${i + batch.length}/${exportData.length} rows to sheet "${sheetName}"...`);
+          }
+        }
+      } else {
+        // Small dataset - write all at once
+        const range = sheet.getRange(1, 1, exportData.length, getMaxColumns(exportData));
+        range.setValues(exportData);
+      }
+      
+      // Format the sheet
+      formatReportSheet(sheet, exportData, metadata);
+    }
+    
+    return {
+      success: true,
+      fileId: spreadsheet.getId(),
+      fileName: spreadsheet.getName(),
+      sheetName: sheetName,
+      errors: []
+    };
+    
+  } catch (error) {
+    console.error('Error adding sheet to current file:', error);
+    return {
+      success: false,
+      fileId: null,
+      fileName: null,
+      sheetName: null,
+      errors: [`Failed to add sheet to current file: ${error.message}`]
+    };
+  }
+}
+
+/**
+ * Create new file with simple data (for empty reports)
+ * @param {Array} data - Simple 2D data array
+ * @param {string} fileName - Name for the new file
+ * @param {string} sheetName - Name for the sheet
+ * @returns {Object} Export result
+ */
+function createNewFileWithData(data, fileName, sheetName) {
+  try {
+    const newSpreadsheet = SpreadsheetApp.create(fileName);
+    const sheet = newSpreadsheet.getActiveSheet();
+    sheet.setName(sheetName);
+    
+    if (data.length > 0) {
+      const range = sheet.getRange(1, 1, data.length, getMaxColumns(data));
+      range.setValues(data);
+      
+      // Basic formatting
+      const headerRange = sheet.getRange(1, 1, 1, getMaxColumns(data));
+      headerRange.setFontWeight('bold');
+    }
+    
+    return {
+      success: true,
+      fileId: newSpreadsheet.getId(),
+      fileName: fileName,
+      sheetName: sheetName,
+      errors: []
+    };
+    
+  } catch (error) {
+    return {
+      success: false,
+      fileId: null,
+      fileName: null,
+      sheetName: null,
+      errors: [`Failed to create file: ${error.message}`]
+    };
+  }
+}
+
+/**
+ * Add data to current sheet (for empty reports)
+ * @param {Array} data - Simple 2D data array
+ * @param {string} sheetName - Name for the new sheet
+ * @returns {Object} Export result
+ */
+function addToCurrentSheet(data, sheetName) {
+  try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // Generate unique sheet name
+    let finalSheetName = sheetName;
+    let counter = 1;
+    while (spreadsheet.getSheetByName(finalSheetName)) {
+      finalSheetName = `${sheetName}_${counter}`;
+      counter++;
+    }
+    
+    const sheet = spreadsheet.insertSheet(finalSheetName);
+    
+    if (data.length > 0) {
+      const range = sheet.getRange(1, 1, data.length, getMaxColumns(data));
+      range.setValues(data);
+      
+      // Basic formatting
+      const headerRange = sheet.getRange(1, 1, 1, getMaxColumns(data));
+      headerRange.setFontWeight('bold');
+    }
+    
+    return {
+      success: true,
+      fileId: spreadsheet.getId(),
+      fileName: spreadsheet.getName(),
+      sheetName: finalSheetName,
+      errors: []
+    };
+    
+  } catch (error) {
+    return {
+      success: false,
+      fileId: null,
+      fileName: null,
+      sheetName: null,
+      errors: [`Failed to add sheet: ${error.message}`]
+    };
+  }
+}
+
+/**
+ * Format the report sheet with styling and formatting
+ * @param {Sheet} sheet - Google Sheets sheet object
+ * @param {Array} exportData - The exported data
+ * @param {Object} metadata - Report metadata
+ */
+function formatReportSheet(sheet, exportData, metadata) {
+  try {
+    // Find the data header row (after metadata section)
+    let dataHeaderRowIndex = -1;
+    for (let i = 0; i < exportData.length; i++) {
+      if (exportData[i].length > 0 && exportData[i][0] === '') {
+        // Found separator row, data headers should be next
+        if (i + 1 < exportData.length) {
+          dataHeaderRowIndex = i + 2; // Convert to 1-based indexing
+          break;
+        }
+      }
+    }
+    
+    // Format metadata section (first part)
+    const metadataEndRow = dataHeaderRowIndex > 0 ? dataHeaderRowIndex - 2 : exportData.length;
+    if (metadataEndRow > 0) {
+      const metadataRange = sheet.getRange(1, 1, metadataEndRow, 2);
+      metadataRange.setFontWeight('bold');
+      metadataRange.setBackground('#f0f0f0');
+    }
+    
+    // Format data headers if they exist
+    if (dataHeaderRowIndex > 0 && dataHeaderRowIndex <= exportData.length) {
+      const headerRange = sheet.getRange(dataHeaderRowIndex, 1, 1, exportData[dataHeaderRowIndex - 1].length);
+      headerRange.setFontWeight('bold');
+      headerRange.setBackground('#4a90e2');
+      headerRange.setFontColor('#ffffff');
+    }
+    
+    // Auto-resize columns
+    sheet.autoResizeColumns(1, Math.min(getMaxColumns(exportData), 26)); // Limit to 26 columns for performance
+    
+    // Freeze the metadata and header rows
+    if (dataHeaderRowIndex > 0) {
+      sheet.setFrozenRows(dataHeaderRowIndex);
+    }
+    
+  } catch (formatError) {
+    Logger.log('Warning: Could not apply formatting: ' + formatError.message);
+    // Formatting is not critical, continue without it
+  }
+}
+
+/**
+ * Get maximum number of columns in a 2D array
+ * @param {Array} data - 2D array
+ * @returns {number} Maximum column count
+ */
+function getMaxColumns(data) {
+  let maxCols = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i].length > maxCols) {
+      maxCols = data[i].length;
+    }
+  }
+  return Math.max(maxCols, 1);
+}
+
+/**
+ * Format date for filename (YYYY-MM-DD_HH-MM)
+ * @param {Date} date - Date to format
+ * @returns {string} Formatted date string
+ */
+function formatDateForFilename(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}_${hours}-${minutes}`;
+}
+
+// ============================================================================
+// UI FUNCTIONS FOR CONFIGURATION-DRIVEN REPORT EXPORT
+// ============================================================================
+
+/**
+ * UI function to export configurable reports
+ * Shows configuration selection and handles the export process
+ */
+function exportConfigurableReportUI() {
+  try {
+    const ui = SpreadsheetApp.getUi();
+    
+    // Get available configurations
+    ui.alert('Initializing...', 'Loading report configurations...', ui.ButtonSet.OK);
+    const configResult = readReportConfigurations();
+    
+    if (!configResult.success || configResult.configurations.length === 0) {
+      ui.alert(
+        'No Report Configurations',
+        'No valid report configurations found. Please set up configurations in the "Report Configs" sheet first.',
+        ui.ButtonSet.OK
+      );
+      return;
+    }
+    
+    // Show configuration selection dialog
+    const selectedConfig = selectReportConfigurationUI(configResult.configurations);
+    if (!selectedConfig) {
+      return; // User cancelled
+    }
+    
+    // Progress tracking for data aggregation
+    ui.alert('Processing...', 'Gathering timesheet data for report generation...', ui.ButtonSet.OK);
+    const startTime = new Date().getTime();
+    
+    // Get time period and aggregated data
+    const time = readTime();
+    const aggregatedData = aggregateMonthlyTimesheets(time);
+    
+    // Validate aggregated data
+    if (!aggregatedData || !Array.isArray(aggregatedData.entries) || aggregatedData.entries.length === 0) {
+      ui.alert(
+        'No Data Available',
+        'No timesheet data was found to generate the report. Please ensure there are timesheet files in the correct format and try again.',
+        ui.ButtonSet.OK
+      );
+      return;
+    }
+    
+    // Check if aggregation took more than 30 seconds
+    const aggregationTime = new Date().getTime() - startTime;
+    if (aggregationTime > 30000) {
+      ui.alert(
+        'Progress Update',
+        `Data aggregation completed in ${Math.round(aggregationTime / 1000)} seconds. Now generating report...`,
+        ui.ButtonSet.OK
+      );
+    }
+    
+    // Generate report with progress tracking
+    const reportStartTime = new Date().getTime();
+    ui.alert('Generating Report...', `Creating "${selectedConfig.reportName}" report with specified filters and formatting...`, ui.ButtonSet.OK);
+    
+    const reportResult = generateConfigurableReport(aggregatedData.entries, selectedConfig);
+    
+    if (!reportResult.success) {
+      ui.alert(
+        'Report Generation Error',
+        `Failed to generate report: ${reportResult.errors.join(', ')}`,
+        ui.ButtonSet.OK
+      );
+      return;
+    }
+    
+    // Check report generation time
+    const reportTime = new Date().getTime() - reportStartTime;
+    if (reportTime > 30000) {
+      ui.alert(
+        'Progress Update',
+        `Report generation completed in ${Math.round(reportTime / 1000)} seconds. Now exporting to Google Sheets...`,
+        ui.ButtonSet.OK
+      );
+    }
+    
+    // Export to Google Sheets with progress tracking
+    const exportStartTime = new Date().getTime();
+    ui.alert('Exporting...', `Creating Google Sheets file for "${selectedConfig.reportName}" with ${reportResult.reportData.length} records...`, ui.ButtonSet.OK);
+    
+    const exportResult = exportReportToGoogleSheets(reportResult.reportData, reportResult.metadata, 'new_file');
+    
+    // Check export time
+    const exportTime = new Date().getTime() - exportStartTime;
+    const totalTime = new Date().getTime() - startTime;
+    
+    if (exportResult.success) {
+      let successMessage = `Report exported successfully!\n\n`;
+      successMessage += `Report: ${selectedConfig.reportName}\n`;
+      successMessage += `Records: ${reportResult.reportData.length}\n`;
+      successMessage += `File: ${exportResult.fileName}\n`;
+      
+      // Add timing information for operations > 30 seconds
+      if (totalTime > 30000) {
+        successMessage += `\nTotal processing time: ${Math.round(totalTime / 1000)} seconds`;
+        if (aggregationTime > 10000) successMessage += `\n• Data aggregation: ${Math.round(aggregationTime / 1000)}s`;
+        if (reportTime > 10000) successMessage += `\n• Report generation: ${Math.round(reportTime / 1000)}s`;
+        if (exportTime > 10000) successMessage += `\n• Export to Sheets: ${Math.round(exportTime / 1000)}s`;
+      }
+      
+      ui.alert('Export Complete', successMessage, ui.ButtonSet.OK);
+    } else {
+      ui.alert(
+        'Export Error',
+        `Failed to export report: ${exportResult.errors.join(', ')}`,
+        ui.ButtonSet.OK
+      );
+    }
+    
+  } catch (error) {
+    Logger.log('Error in exportConfigurableReportUI: ' + error.message);
+    SpreadsheetApp.getUi().alert(
+      'System Error',
+      `An unexpected error occurred: ${error.message}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  }
+}
+
+/**
+ * UI function to select a report configuration from available options
+ * @param {Array} configurations - Array of available configurations
+ * @returns {Object|null} Selected configuration object or null if cancelled
+ */
+function selectReportConfigurationUI(configurations) {
+  try {
+    if (!configurations || configurations.length === 0) {
+      return null;
+    }
+    
+    // If only one configuration, use it directly
+    if (configurations.length === 1) {
+      const config = configurations[0];
+      const ui = SpreadsheetApp.getUi();
+      const response = ui.alert(
+        'Confirm Configuration',
+        `Use report configuration "${config.reportName}"?\n\nDescription: ${config.description}\nColumns: ${config.columns.join(', ')}`,
+        SpreadsheetApp.getUi().ButtonSet.YES_NO
+      );
+      
+      return response === ui.Button.YES ? config : null;
+    }
+    
+    // Multiple configurations - show selection dialog
+    const ui = SpreadsheetApp.getUi();
+    
+    // Build configuration list for display
+    const configOptions = [];
+    for (let i = 0; i < configurations.length; i++) {
+      const config = configurations[i];
+      configOptions.push(`${i + 1}. ${config.reportName} - ${config.description}`);
+    }
+    
+    const prompt = 'Select a report configuration:\n\n' + configOptions.join('\n') + '\n\nEnter the number (1-' + configurations.length + '):';
+    
+    const response = ui.prompt('Select Report Configuration', prompt, ui.ButtonSet.OK_CANCEL);
+    
+    if (response.getSelectedButton() !== ui.Button.OK) {
+      return null; // User cancelled
+    }
+    
+    const selectedIndex = parseInt(response.getResponseText());
+    
+    if (isNaN(selectedIndex) || selectedIndex < 1 || selectedIndex > configurations.length) {
+      ui.alert('Invalid Selection', 'Please enter a valid number between 1 and ' + configurations.length, ui.ButtonSet.OK);
+      return selectReportConfigurationUI(configurations); // Recursive retry
+    }
+    
+    return configurations[selectedIndex - 1];
+    
+  } catch (error) {
+    Logger.log('Error in selectReportConfigurationUI: ' + error.message);
+    SpreadsheetApp.getUi().alert(
+      'Selection Error',
+      `Error selecting configuration: ${error.message}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return null;
+  }
 }
