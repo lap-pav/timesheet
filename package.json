@@ -8,12 +8,14 @@
     "test:coverage": "jest --coverage"
   },
   "devDependencies": {
-    "jest": "^29.0.0",
-    "@types/google-apps-script": "^1.0.0"
+    "@types/google-apps-script": "^1.0.100",
+    "jest": "^29.0.0"
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/tests/**/*.js"],
+    "testMatch": [
+      "**/tests/**/*.js"
+    ],
     "collectCoverageFrom": [
       "script/**/*.gs",
       "!**/node_modules/**"
