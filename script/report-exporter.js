@@ -1322,7 +1322,7 @@ function ensureReportFolder(basePath, reportName, timeperiod) {
     // Step 2: Create or find monthly subfolder (YYYY-MM format)
     let targetFolder = mainFolder;
     if (REPORT_CONFIG.REPORT_FOLDER_CONFIG.MONTHLY_SUBFOLDERS && timeperiod) {
-      const monthlyFolderName = timeperiod; // e.g., "2025-10"
+      const monthlyFolderName = `${timeperiod}-Reports`; // e.g., "2025-10-Reports"
       const existingMonthlyFolders = mainFolder.getFoldersByName(monthlyFolderName);
       
       if (existingMonthlyFolders.hasNext()) {

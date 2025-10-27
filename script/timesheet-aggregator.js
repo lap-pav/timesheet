@@ -493,15 +493,11 @@ function mapEntryToColumns(entry, headers) {
     // Map headers to standard fields
     for (const [fieldName, patterns] of Object.entries(AGGREGATION_CONFIG.EXPECTED_HEADERS)) {
       if (patterns.some(function(pattern) { return headerLower.includes(pattern.toLowerCase()); })) {
-        const mappedFieldName = fieldName.toLowerCase().replace(/_/g, '_');
-        if (fieldName === 'DATE') mapped.date = value;
-        else if (fieldName === 'FROM_TIME') mapped.from_time = value;
-        else if (fieldName === 'TO_TIME') mapped.to_time = value;
-        else if (fieldName === 'PROJECT') mapped.project = value;
-        else if (fieldName === 'TASK_TYPE') mapped.task_type = value;
-        else if (fieldName === 'DESCRIPTION') mapped.description = value;
-        else if (fieldName === 'TC_FROM_TIME') mapped.tc_from_time = value;
-        else if (fieldName === 'TC_TO_TIME') mapped.tc_to_time = value;
+        // Dynamic field mapping using configuration
+        const targetField = AGGREGATION_CONFIG.FIELD_MAPPINGS[fieldName];
+        if (targetField) {
+          mapped[targetField] = value;
+        }
         break;
       }
     }
@@ -1092,4 +1088,194 @@ function generateErrorSummary(errors) {
   }
   
   return summary;
+}
+
+// ============================================================================
+// TEMPLATE ADAPTATION UTILITIES
+// ============================================================================
+// 🚨 FUNCTIONS TO HELP WITH TEMPLATE CHANGES 🚨
+
+/**
+ * Get all field names that should be expected in timesheet data
+ * @returns {Array} Array of internal field names
+ */
+function getExpectedDataFields() {
+  const allFields = [...TIMESHEET_TEMPLATE_CONFIG.REQUIRED_FIELDS, ...TIMESHEET_TEMPLATE_CONFIG.OPTIONAL_FIELDS];
+  return allFields.map(field => AGGREGATION_CONFIG.FIELD_MAPPINGS[field]).filter(Boolean);
+}
+
+/**
+ * Check if a field is required in the current template
+ * @param {string} fieldKey - Header field key (e.g., 'DATE', 'PROJECT')
+ * @returns {boolean} True if field is required
+ */
+function isRequiredField(fieldKey) {
+  return TIMESHEET_TEMPLATE_CONFIG.REQUIRED_FIELDS.includes(fieldKey);
+}
+
+/**
+ * Validate data structure against current template requirements
+ * @param {Object} data - Aggregated timesheet data
+ * @returns {Object} Validation result with warnings about template compatibility
+ */
+function validateTemplateCompatibility(data) {
+  const result = {
+    isCompatible: true,
+    warnings: [],
+    missingFields: [],
+    extraFields: []
+  };
+  
+  if (!data.entries || data.entries.length === 0) {
+    return result;
+  }
+  
+  const sampleEntry = data.entries[0];
+  const expectedFields = getExpectedDataFields();
+  const actualFields = Object.keys(sampleEntry);
+  
+  // Check for missing expected fields
+  expectedFields.forEach(field => {
+    if (!actualFields.includes(field)) {
+      result.missingFields.push(field);
+      result.warnings.push(`Expected field '${field}' not found in data`);
+    }
+  });
+  
+  // Check for unexpected fields (might indicate template changes)
+  actualFields.forEach(field => {
+    if (!expectedFields.includes(field) && !['source_file', 'row_index', 'processed_at'].includes(field)) {
+      result.extraFields.push(field);
+      result.warnings.push(`Unexpected field '${field}' found in data - template may have changed`);
+    }
+  });
+  
+  result.isCompatible = result.missingFields.length === 0;
+  
+  return result;
+}
+
+/**
+ * Generate template update guidance when template changes are detected
+ * @param {Object} validationResult - Result from validateTemplateCompatibility
+ * @returns {Array} Array of update instructions
+ */
+function generateTemplateUpdateGuidance(validationResult) {
+  const guidance = [];
+  
+  if (validationResult.missingFields.length > 0) {
+    guidance.push('MISSING FIELDS DETECTED:');
+    guidance.push('1. Update AGGREGATION_CONFIG.EXPECTED_HEADERS in constants.js');
+    guidance.push('2. Update AGGREGATION_CONFIG.FIELD_MAPPINGS in constants.js');
+    guidance.push('3. Update TIMESHEET_TEMPLATE_CONFIG.REQUIRED_FIELDS or OPTIONAL_FIELDS');
+    guidance.push(`   Missing: ${validationResult.missingFields.join(', ')}`);
+  }
+  
+  if (validationResult.extraFields.length > 0) {
+    guidance.push('NEW FIELDS DETECTED:');
+    guidance.push('1. Check if these are new template fields:');
+    guidance.push(`   Found: ${validationResult.extraFields.join(', ')}`);
+    guidance.push('2. Add to EXPECTED_HEADERS if they should be processed');
+    guidance.push('3. Add to FIELD_MAPPINGS with appropriate target names');
+    guidance.push('4. Add to REQUIRED_FIELDS or OPTIONAL_FIELDS as appropriate');
+  }
+  
+  if (guidance.length > 0) {
+    guidance.unshift('🚨 TEMPLATE UPDATE REQUIRED 🚨');
+    guidance.push('');
+    guidance.push('After updating constants.js:');
+    guidance.push('- Test with sample timesheet files');
+    guidance.push('- Update TIMESHEET_TEMPLATE_CONFIG.TEMPLATE_VERSION');
+    guidance.push('- Update TIMESHEET_TEMPLATE_CONFIG.TEMPLATE_LAST_UPDATED');
+  }
+  
+  return guidance;
+}
+
+/**
+ * 🔧 TEMPLATE DIAGNOSTIC FUNCTION
+ * Run this function when template changes to check compatibility
+ * Call from Apps Script editor: templateDiagnostic()
+ */
+function templateDiagnostic() {
+  try {
+    console.log('=== TIMESHEET TEMPLATE DIAGNOSTIC ===');
+    console.log(`Template Version: ${TIMESHEET_TEMPLATE_CONFIG.TEMPLATE_VERSION}`);
+    console.log(`Last Updated: ${TIMESHEET_TEMPLATE_CONFIG.TEMPLATE_LAST_UPDATED}`);
+    console.log('');
+    
+    // Get current time and test with sample data
+    const time = readTime();
+    console.log(`Testing with time period: ${time}`);
+    
+    // Try to get folder
+    const folderResult = getMonthlyFolder(time);
+    if (!folderResult.folder) {
+      console.log('❌ No monthly folder found for testing');
+      console.log('Create a test folder and timesheet files first');
+      return;
+    }
+    
+    console.log(`✅ Found folder: ${folderResult.folder.getName()}`);
+    
+    // Try aggregation
+    const aggregationResult = aggregateMonthlyTimesheets(time);
+    if (!aggregationResult || !aggregationResult.entries) {
+      console.log('❌ No data aggregated - check timesheet files');
+      return;
+    }
+    
+    console.log(`✅ Aggregated ${aggregationResult.entries.length} entries`);
+    
+    // Check template compatibility
+    const compatibility = validateTemplateCompatibility(aggregationResult);
+    
+    if (compatibility.isCompatible) {
+      console.log('✅ Template is compatible with current data');
+    } else {
+      console.log('⚠️ Template compatibility issues detected');
+    }
+    
+    if (compatibility.warnings.length > 0) {
+      console.log('');
+      console.log('WARNINGS:');
+      compatibility.warnings.forEach(warning => console.log(`  - ${warning}`));
+    }
+    
+    // Show update guidance if needed
+    const guidance = generateTemplateUpdateGuidance(compatibility);
+    if (guidance.length > 0) {
+      console.log('');
+      guidance.forEach(line => console.log(line));
+    }
+    
+    // Show current field mappings
+    console.log('');
+    console.log('CURRENT FIELD MAPPINGS:');
+    Object.entries(AGGREGATION_CONFIG.FIELD_MAPPINGS).forEach(([key, value]) => {
+      const required = isRequiredField(key) ? '[REQUIRED]' : '[OPTIONAL]';
+      console.log(`  ${key} → ${value} ${required}`);
+    });
+    
+    // Show sample data structure
+    if (aggregationResult.entries.length > 0) {
+      console.log('');
+      console.log('SAMPLE DATA STRUCTURE:');
+      console.log(JSON.stringify(aggregationResult.entries[0], null, 2));
+    }
+    
+    return {
+      compatible: compatibility.isCompatible,
+      warnings: compatibility.warnings,
+      guidance: guidance,
+      sampleData: aggregationResult.entries[0]
+    };
+    
+  } catch (error) {
+    console.error('Template diagnostic error:', error.message);
+    return {
+      error: error.message,
+      guidance: ['Check that timesheet files exist and are properly formatted']
+    };
+  }
 }

@@ -3,6 +3,98 @@
 // ============================================================================
 
 // ============================================================================
+// 🚨 TEMPLATE UPDATE GUIDE 🚨
+// ============================================================================
+// 
+// WHEN TIMESHEET TEMPLATE CHANGES, UPDATE THESE SECTIONS IN ORDER:
+//
+// 1. TIMESHEET_TEMPLATE_CONFIG (below):
+//    - Update TEMPLATE_VERSION and TEMPLATE_LAST_UPDATED
+//    - Add/remove fields in REQUIRED_FIELDS and OPTIONAL_FIELDS
+//    - Update FIELD_VALIDATION rules for new fields
+//
+// 2. AGGREGATION_CONFIG.EXPECTED_HEADERS:
+//    - Add header patterns that might appear in new template
+//    - Update existing patterns if column names change
+//
+// 3. AGGREGATION_CONFIG.FIELD_MAPPINGS:
+//    - Map header keys to internal field names
+//    - Use consistent naming (lowercase, underscores)
+//
+// 4. REPORT_CONFIG.COLUMN_MAPPINGS (if needed):
+//    - Add display name variations for new fields
+//    - Update expressions in REPORT_CONFIGS_EXAMPLES.md
+//
+// 5. TEST THE CHANGES:
+//    - Run templateDiagnostic() function in Apps Script editor
+//    - Test with sample timesheet files
+//    - Verify reports generate correctly
+//
+// EXAMPLE: Adding a new "Priority" field:
+// 1. Add 'PRIORITY' to OPTIONAL_FIELDS
+// 2. Add PRIORITY: ['priority', 'importance', 'urgency'] to EXPECTED_HEADERS  
+// 3. Add PRIORITY: 'priority' to FIELD_MAPPINGS
+// 4. Add 'Priority': 'priority' to COLUMN_MAPPINGS
+// 5. Test with templateDiagnostic()
+//
+// ============================================================================
+
+// ============================================================================
+// TIMESHEET TEMPLATE CONFIGURATION
+// ============================================================================
+// 🚨 UPDATE THIS SECTION WHEN TIMESHEET TEMPLATE CHANGES 🚨
+
+const TIMESHEET_TEMPLATE_CONFIG = {
+  // Current template version for tracking changes
+  TEMPLATE_VERSION: '1.0',
+  TEMPLATE_LAST_UPDATED: '2025-10-27',
+  
+  // Required fields that must be present in every timesheet
+  // TO UPDATE TEMPLATE: Add/remove required fields here
+  REQUIRED_FIELDS: ['DATE', 'FROM_TIME', 'TO_TIME', 'PROJECT'],
+  
+  // Optional fields that may or may not be present
+  // TO UPDATE TEMPLATE: Add/remove optional fields here  
+  OPTIONAL_FIELDS: ['TASK_TYPE', 'DESCRIPTION', 'TC_FROM_TIME', 'TC_TO_TIME'],
+  
+  // Field validation rules
+  // TO UPDATE TEMPLATE: Modify validation rules for new/changed fields
+  FIELD_VALIDATION: {
+    DATE: {
+      required: true,
+      type: 'date',
+      patterns: [/^\d{4}-\d{2}-\d{2}$/, /^\d{2}\/\d{2}\/\d{4}$/, /^\d{1,2}\/\d{1,2}\/\d{4}$/]
+    },
+    FROM_TIME: {
+      required: true,
+      type: 'time',
+      patterns: [/^\d{1,2}:\d{2}$/, /^\d{1,2}:\d{2}:\d{2}$/, /^\d{1,2}:\d{2}\s*(AM|PM)$/i]
+    },
+    TO_TIME: {
+      required: true,
+      type: 'time', 
+      patterns: [/^\d{1,2}:\d{2}$/, /^\d{1,2}:\d{2}:\d{2}$/, /^\d{1,2}:\d{2}\s*(AM|PM)$/i]
+    },
+    PROJECT: {
+      required: true,
+      type: 'text',
+      minLength: 1,
+      maxLength: 100
+    },
+    TASK_TYPE: {
+      required: false,
+      type: 'text',
+      maxLength: 50
+    },
+    DESCRIPTION: {
+      required: false,
+      type: 'text',
+      maxLength: 500
+    }
+  }
+};
+
+// ============================================================================
 // TIMESHEET AGGREGATION CONSTANTS AND CONFIGURATION
 // ============================================================================
 
@@ -18,15 +110,29 @@ const AGGREGATION_CONFIG = {
   MONTH_FOLDER_PATTERN: /^(\d{4}-\d{2})$/,
   
   // Expected column headers (case-insensitive matching)
+  // TO UPDATE TEMPLATE: Add new header patterns here
   EXPECTED_HEADERS: {
-    DATE: ['date', 'day'],
-    FROM_TIME: ['from time', 'start time', 'from'],
-    TO_TIME: ['to time', 'end time', 'to'],
-    PROJECT: ['project', 'project name'],
-    TASK_TYPE: ['task type', 'task', 'type', 'activity'],
-    DESCRIPTION: ['description', 'desc', 'details'],
+    DATE: ['date', 'day', 'work date'],
+    FROM_TIME: ['from time', 'start time', 'from', 'begin time'],
+    TO_TIME: ['to time', 'end time', 'to', 'finish time'],
+    PROJECT: ['project', 'project name', 'client', 'account'],
+    TASK_TYPE: ['task type', 'task', 'type', 'activity', 'work type'],
+    DESCRIPTION: ['description', 'desc', 'details', 'notes', 'comments'],
     TC_FROM_TIME: ['tc from time', 'tc start', 'timecard from'],
     TC_TO_TIME: ['tc to time', 'tc end', 'timecard to']
+  },
+  
+  // Field mapping from header keys to internal field names
+  // TO UPDATE TEMPLATE: Modify target field names here
+  FIELD_MAPPINGS: {
+    DATE: 'date',
+    FROM_TIME: 'from_time',
+    TO_TIME: 'to_time', 
+    PROJECT: 'project',
+    TASK_TYPE: 'task_type',
+    DESCRIPTION: 'description',
+    TC_FROM_TIME: 'tc_from_time',
+    TC_TO_TIME: 'tc_to_time'
   },
   
   // Data validation
