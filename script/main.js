@@ -94,31 +94,53 @@ Aggregation completed for ${time}:
 // ============================================================================
 
 /**
- * UI function to export configurable reports
+ * Enhanced UI function to export configurable reports with expression support
  * Shows configuration selection and handles the export process
  */
 function exportConfigurableReportUI() {
   try {
+    Logger.log('Starting exportConfigurableReportUI');
     const ui = SpreadsheetApp.getUi();
     
     // Get available configurations
     ui.alert('Initializing...', 'Loading report configurations...', ui.ButtonSet.OK);
     const configResult = readReportConfigurations();
     
-    if (!configResult.success || configResult.configurations.length === 0) {
+    if (!configResult.success) {
       ui.alert(
-        'No Report Configurations',
-        'No valid report configurations found. Please set up configurations in the "Report Configs" sheet first.',
+        'Configuration Error',
+        `Error loading configurations: ${configResult.errors.join(' ')}`,
         ui.ButtonSet.OK
       );
       return;
     }
     
-    // Show configuration selection dialog
-    const selectedConfig = selectReportConfigurationUI(configResult.configurations);
+    // Filter enabled configurations
+    const enabledConfigs = configResult.configurations.filter(function(config) {
+      return config.enabled === true;
+    });
+    
+    if (enabledConfigs.length === 0) {
+      ui.alert(
+        'No Configurations',
+        'No enabled report configurations found. Please enable at least one configuration in the "Report Config" sheet.',
+        ui.ButtonSet.OK
+      );
+      return;
+    }
+    
+    // Show enhanced configuration selection dialog
+    const selectedConfig = selectReportConfigurationUI(enabledConfigs);
     if (!selectedConfig) {
+      Logger.log('Report export cancelled by user');
       return; // User cancelled
     }
+    
+    Logger.log(`Processing configuration: ${selectedConfig.reportName}`);
+    
+    // Ensure backward compatibility and migration
+    const migratedConfig = ensureBackwardCompatibility(selectedConfig);
+  
     
     // Progress tracking for data aggregation
     ui.alert('Processing...', 'Gathering timesheet data for report generation...', ui.ButtonSet.OK);
@@ -148,11 +170,12 @@ function exportConfigurableReportUI() {
       );
     }
     
-    // Generate report with progress tracking
+    // Generate report with enhanced configuration
     const reportStartTime = new Date().getTime();
-    ui.alert('Generating Report...', `Creating "${selectedConfig.reportName}" report with specified filters and formatting...`, ui.ButtonSet.OK);
+    const configType = migratedConfig.columnDefinitions ? 'expression-based' : 'legacy';
+    ui.alert('Generating Report...', `Creating "${migratedConfig.reportName}" report (${configType}) with specified filters and formatting...`, ui.ButtonSet.OK);
     
-    const reportResult = generateConfigurableReport(aggregatedData.entries, selectedConfig);
+    const reportResult = generateConfigurableReport(aggregatedData.entries, migratedConfig);
     
     if (!reportResult.success) {
       ui.alert(
@@ -173,11 +196,20 @@ function exportConfigurableReportUI() {
       );
     }
     
-    // Export to Google Sheets with progress tracking
-    const exportStartTime = new Date().getTime();
-    ui.alert('Exporting...', `Creating Google Sheets file for "${selectedConfig.reportName}" with ${reportResult.reportData.length} records...`, ui.ButtonSet.OK);
+    // Determine output structure for export
+    const outputStructure = migratedConfig.outputStructure !== 'SINGLE_SHEET' ? {
+      outputType: migratedConfig.outputStructure,
+      groupingField: migratedConfig.groupingField
+    } : null;
     
-    const exportResult = exportReportToGoogleSheets(reportResult.reportData, reportResult.metadata, 'new_file');
+    // Export to Google Sheets with enhanced output structure support
+    const exportStartTime = new Date().getTime();
+    const exportMessage = outputStructure ? 
+      `Creating "${migratedConfig.reportName}" with ${migratedConfig.outputStructure} structure...` :
+      `Creating Google Sheets file for "${migratedConfig.reportName}" with ${reportResult.reportData.length} records...`;
+    ui.alert('Exporting...', exportMessage, ui.ButtonSet.OK);
+    
+    const exportResult = exportReportToGoogleSheets(reportResult.reportData, reportResult.metadata, 'new_file', outputStructure);
     
     // Check export time
     const exportTime = new Date().getTime() - exportStartTime;
@@ -306,4 +338,79 @@ function readMembers() {
   data = data.filter(function(row) { return !row[MEMBER_COLUMNS.IN_ACTIVE]; });
 
   return data;
+}
+
+// ============================================================================
+// ENHANCED CONFIGURATION UI FUNCTIONS
+// ============================================================================
+
+/**
+ * Show advanced configuration dialog for output structure options
+ * @returns {Object} Advanced configuration options
+ */
+function showAdvancedConfigurationDialog() {
+  try {
+    const ui = SpreadsheetApp.getUi();
+    
+    const promptMessage = `Advanced Configuration Options
+
+Choose output structure and settings:
+
+Output Structure Options:
+1. SINGLE_SHEET - All data in one sheet (default)
+2. SHEET_PER_PROJECT - Separate sheet for each project
+3. SHEET_PER_EMPLOYEE - Separate sheet for each employee  
+4. FILE_PER_PROJECT - Separate file for each project
+5. FILE_PER_EMPLOYEE - Separate file for each employee
+
+Enter your preferences (comma-separated):
+Structure,GroupingField,CustomFilename,IncludeTimestamp
+
+Example: SHEET_PER_PROJECT,Project Name,Custom_Report,true
+
+Or press Cancel for defaults.`;
+
+    const response = ui.prompt('Advanced Configuration', promptMessage, ui.ButtonSet.OK_CANCEL);
+    
+    // Default configuration
+    const defaults = {
+      outputStructure: 'SINGLE_SHEET',
+      groupingField: '',
+      customFilename: '',
+      includeTimestamp: true
+    };
+    
+    if (response.getSelectedButton() !== ui.Button.OK) {
+      return defaults;
+    }
+    
+    const userInput = response.getResponseText().trim();
+    if (!userInput) {
+      return defaults;
+    }
+    
+    // Parse user input
+    const parts = userInput.split(',').map(function(part) {
+      return part.trim();
+    });
+    
+    const config = {
+      outputStructure: parts[0] || defaults.outputStructure,
+      groupingField: parts[1] || defaults.groupingField,
+      customFilename: parts[2] || defaults.customFilename,
+      includeTimestamp: parts[3] ? parts[3].toLowerCase() === 'true' : defaults.includeTimestamp
+    };
+    
+    return config;
+    
+  } catch (error) {
+    console.error('Error in showAdvancedConfigurationDialog:', error);
+    // Return defaults on error
+    return {
+      outputStructure: 'SINGLE_SHEET',
+      groupingField: '',
+      customFilename: '',
+      includeTimestamp: true
+    };
+  }
 }
