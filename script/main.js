@@ -11,6 +11,7 @@ function onOpen() {
       .addItem('Generate Timesheet Files', 'generateTimesheetFiles')
       .addItem('Aggregate Monthly Timesheets', 'aggregateMonthlyTimesheetsUI')
       .addSeparator()
+      .addItem('Create a New Report', 'generateReportFromNaturalLanguage')
       .addItem('Report', 'exportConfigurableReportUI')
       .addToUi();
 }
@@ -338,6 +339,127 @@ function readMembers() {
   data = data.filter(function(row) { return !row[MEMBER_COLUMNS.IN_ACTIVE]; });
 
   return data;
+}
+
+// ============================================================================
+// AI REPORT GENERATION UI ENTRY POINTS
+// ============================================================================
+
+/**
+ * Main entry point for AI-powered report generation
+ * Called from Google Sheets menu
+ */
+function generateReportFromNaturalLanguage() {
+  try {
+    logAIInfo('Starting natural language report generation from UI');
+    
+    const ui = SpreadsheetApp.getUi();
+    
+    // Check if AI credentials are set up
+    if (!checkAICredentials()) {
+      const response = ui.alert(
+        'AI Setup Required',
+        'AI credentials are not configured. Would you like to set them up now?',
+        ui.ButtonSet.YES_NO
+      );
+      
+      if (response === ui.Button.YES) {
+        ui.alert('Manual Setup Required', 'Please ask your administrator to set up AI credentials in the Apps Script Properties Service.', ui.ButtonSet.OK);
+        return;
+      } else {
+        ui.alert('Setup Required', 'AI credentials are required to generate reports. Please set them up through the menu.', ui.ButtonSet.OK);
+        return;
+      }
+    }
+    
+    // Get user input for report requirements
+    const promptResponse = ui.prompt(
+      'Generate a New Report',
+      'Describe the report you want to generate. For example:\n' +
+      '• "Show me weekly hours by project for September"\n' +
+      '• "Create a report showing employee overtime hours"\n' +
+      '• "Generate time tracking summary by department"\n\n' +
+      'What would you like to see in your report?',
+      ui.ButtonSet.OK_CANCEL
+    );
+    
+    if (promptResponse.getSelectedButton() !== ui.Button.OK) {
+      logAIInfo('User cancelled report generation');
+      return;
+    }
+    
+    const userInput = promptResponse.getResponseText().trim();
+    if (!userInput) {
+      ui.alert('Input Required', 'Please describe what kind of report you want to generate.', ui.ButtonSet.OK);
+      return;
+    }
+    
+    logAIInfo('Processing user request: ' + userInput);
+    
+    // Show processing message
+    ui.alert('Processing Request', 'Analyzing your request and generating configuration. This may take a moment...', ui.ButtonSet.OK);
+    
+    // Process the natural language request
+    const result = processNaturalLanguageRequest(userInput);
+    
+    if (!result.success) {
+      logAIInfo('Failed to process request: ' + result.error);
+      ui.alert(
+        'Processing Error',
+        'Sorry, I couldn\'t understand your request. Please try rephrasing it or check the error details:\n\n' + 
+        result.error,
+        ui.ButtonSet.OK
+      );
+      return;
+    }
+    
+    logAIInfo('Successfully generated configuration: ' + result.data.name);
+    
+    // Show success message with configuration details
+    showAIReportSuccessDialog(result.data, { fromCache: result.fromCache });
+    
+  } catch (error) {
+    console.error('Error in generateReportFromNaturalLanguage:', error);
+    logAIInfo('Error in UI function: ' + error.message);
+    
+    const ui = SpreadsheetApp.getUi();
+    ui.alert(
+      'System Error',
+      'An unexpected error occurred while generating your report. Please try again or contact support.\n\nError: ' + error.message,
+      ui.ButtonSet.OK
+    );
+  }
+}
+
+
+
+/**
+ * Show success dialog after AI report generation
+ * @param {Object} configuration - Generated configuration
+ * @param {Object} metadata - Generation metadata
+ */
+function showAIReportSuccessDialog(configuration, metadata) {
+  try {
+    const ui = SpreadsheetApp.getUi();
+    
+    let message = `Successfully generated report configuration!\n\n`;
+    message += `Report Name: ${configuration.name}\n`;
+    message += `Description: ${configuration.description}\n`;
+    message += `Fields: ${configuration.fields ? configuration.fields.length : 0} columns\n`;
+    message += `Output Structure: ${configuration.output_structure}\n`;
+    
+    if (metadata && metadata.fromCache) {
+      message += `\nSource: Cached result\n`;
+    }
+    
+    message += `\nThe configuration has been saved and is ready to use.`;
+    
+    ui.alert('AI Report Generated', message, ui.ButtonSet.OK);
+    
+  } catch (error) {
+    console.error('Error showing success dialog:', error);
+    // Don't throw error here as the main operation succeeded
+  }
 }
 
 // ============================================================================

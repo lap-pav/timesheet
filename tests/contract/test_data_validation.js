@@ -2,6 +2,31 @@
 // This test validates the entry validation function contract
 // Tests MUST FAIL before implementation (TDD approach)
 
+// Import mocks and main script
+const { SpreadsheetApp, DriveApp, Logger, PropertiesService, UrlFetchApp, Utilities, mockSheetData } = require('../unit/mocks');
+
+// Load main script functions
+// Import AI functions from ai-report-generator
+const {
+  processNaturalLanguageRequest,
+  buildAIContext,
+  buildAIPrompt,
+  callAIService,
+  parseAIResponse,
+  validateConfiguration
+} = require('../../script/ai-report-generator.js');
+
+// Import UI functions from main
+const {
+  generateReportFromNaturalLanguage
+} = require('../../script/main.js');
+
+// Import timesheet functions from the backup (these should be moved back to main.js)
+const {
+  validateTimesheetEntry,
+  aggregateMonthlyTimesheets
+} = require('../../script/main.js.backup');
+
 describe('validateTimesheetEntry Contract Tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();

@@ -176,9 +176,9 @@ const REPORT_CONFIG = {
     SORT_BY: 4,           // E: Sort By
     SORT_ORDER: 5,        // F: Sort Order (ASC/DESC)
     SUMMARY_TYPE: 6,      // G: Summary Type (SUM/COUNT/AVG/NONE)
-    ENABLED: 7,           // H: Enabled (TRUE/FALSE)
-    OUTPUT_STRUCTURE: 8,  // I: Output Structure (SINGLE_SHEET, SHEET_PER_PROJECT, etc.)
-    GROUPING_FIELD: 9     // J: Grouping Field (for multi-sheet/file outputs)
+    OUTPUT_STRUCTURE: 7,  // H: Output Structure (SINGLE_SHEET, SHEET_PER_PROJECT, etc.)
+    GROUPING_FIELD: 8,    // I: Grouping Field (for multi-sheet/file outputs)
+    ENABLED: 9,           // J: Enabled (TRUE/FALSE)
   },
   
   // Validation limits
@@ -187,7 +187,7 @@ const REPORT_CONFIG = {
   
   // Valid enumeration values
   VALID_SORT_ORDERS: ['ASC', 'DESC'],
-  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS'],
+  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS', 'MEMBER_PROJECT_BREAKDOWN'],
   VALID_OUTPUT_STRUCTURES: ['SINGLE_SHEET', 'SHEET_PER_PROJECT', 'SHEET_PER_EMPLOYEE', 'FILE_PER_PROJECT', 'FILE_PER_EMPLOYEE'],
   
   // Column name mappings from aggregated data to display names
@@ -459,3 +459,94 @@ const MEMBER_COLUMNS = {
   EMAIL: 5,
   IN_ACTIVE: 6,
 };
+
+// ============================================================================
+// AI REPORT GENERATION CONFIGURATION
+// ============================================================================
+
+/**
+ * AI Service Configuration
+ * These constants control the AI integration behavior
+ */
+const AI_CONFIG = {
+  PRIMARY_SERVICE: 'gemini',
+  FALLBACK_SERVICE: 'claude',
+  CACHE_TTL_HOURS: 24,
+  MAX_INPUT_LENGTH: 1000,
+  REQUEST_TIMEOUT_MS: 30000,
+  MAX_RETRIES: 2,
+  CLAUDE_MODEL: 'claude-sonnet-4-5-20250929',
+  GEMINI_MODEL: 'gemini-2.0-flash'
+};
+
+/**
+ * API Endpoints for AI Services
+ */
+const AI_ENDPOINTS = {
+  GEMINI: `https://generativelanguage.googleapis.com/v1beta/models/${AI_CONFIG.GEMINI_MODEL}:generateContent`,
+  CLAUDE: `https://api.anthropic.com/v1/messages`
+};
+
+/**
+ * AI Report Configuration Constants
+ * Based on REPORT_CONFIGS_EXAMPLES.md format
+ */
+const AI_REPORT_CONFIG = {
+  SHEET_NAME: 'Report Config',
+  MAX_REPORT_NAME_LENGTH: 50,
+  MAX_DESCRIPTION_LENGTH: 200,
+  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS', 'MEMBER_PROJECT_BREAKDOWN'],
+  VALID_OUTPUT_STRUCTURES: ['SINGLE_SHEET', 'SHEET_PER_PROJECT', 'SHEET_PER_EMPLOYEE', 'FILE_PER_PROJECT', 'FILE_PER_EMPLOYEE'],
+  VALID_SORT_ORDERS: ['ASC', 'DESC']
+};
+
+/**
+ * AI Field Mapping from Internal Names to Display Names
+ * Based on data-model.md specifications
+ */
+const AI_FIELD_MAPPING = {
+  'member': 'Member Name',
+  'date': 'Date',
+  'from_time': 'Start Time',
+  'to_time': 'End Time',
+  'project': 'Project Name',
+  'task_type': 'Task Type',
+  'description': 'Task Description',
+  'hours': 'Hours',
+  'client': 'Client',
+  'location': 'Location',
+  'billing_rate': 'Billing Rate',
+  'overtime': 'Overtime',
+  'notes': 'Notes',
+  'status': 'Status',
+  'approval_date': 'Approval Date'
+};
+
+/**
+ * Expression Functions Available for AI Report Generation
+ * Based on expression-functions.md
+ */
+const AI_EXPRESSION_FUNCTIONS = [
+  'calculateHours(from_time, to_time)',
+  'formatDate(date, format)',
+  'formatTime(time, format)',
+  'formatCurrency(amount, currency)',
+  'formatNumber(number, decimals)',
+  'filterByDateRange(entries, start_date, end_date)',
+  'groupByField(entries, field)',
+  'sumByField(entries, field)',
+  'countByField(entries, field)',
+  'averageByField(entries, field)',
+  'sortByField(entries, field, order)',
+  'calculateOvertime(hours, standard_hours)',
+  'calculateTotalCost(hours, rate)',
+  'isWeekend(date)',
+  'isBusinessDay(date)',
+  'getWeekNumber(date)',
+  'getMonthName(date)',
+  'getQuarter(date)',
+  'daysInMonth(date)',
+  'workingDaysInMonth(date)',
+  'age(date1, date2)',
+  'businessDaysDifference(date1, date2)'
+];

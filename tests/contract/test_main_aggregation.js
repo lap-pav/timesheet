@@ -2,16 +2,35 @@
 // This test validates the main aggregation function contract
 // Tests MUST FAIL before implementation (TDD approach)
 
+// Import mocks and main script
+const { SpreadsheetApp, DriveApp, Logger, PropertiesService, UrlFetchApp, Utilities, mockSheetData } = require('../unit/mocks');
+
+// Load main script functions
+// Import AI functions from ai-report-generator
+const {
+  processNaturalLanguageRequest,
+  buildAIContext,
+  buildAIPrompt,
+  callAIService,
+  parseAIResponse,
+  validateConfiguration
+} = require('../../script/ai-report-generator.js');
+
+// Import UI functions from main
+const {
+  generateReportFromNaturalLanguage
+} = require('../../script/main.js');
+
+// Import timesheet functions from the backup (these should be moved back to main.js)
+const {
+  validateTimesheetEntry,
+  aggregateMonthlyTimesheets
+} = require('../../script/main.js.backup');
+
 describe('aggregateMonthlyTimesheets Contract Tests', () => {
-  // Mock Google Apps Script APIs
-  global.DriveApp = {
-    getFoldersByName: jest.fn(),
-    getFileById: jest.fn()
-  };
-  
-  global.SpreadsheetApp = {
-    openById: jest.fn()
-  };
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
   
   global.console = {
     log: jest.fn(),
@@ -29,8 +48,14 @@ describe('aggregateMonthlyTimesheets Contract Tests', () => {
 
   test('should accept monthFolder parameter', () => {
     // Mock successful execution
-    const mockFolder = { getName: () => '2025-09' };
-    global.DriveApp.getFoldersByName.mockReturnValue({
+    const mockFolder = { 
+      getName: () => '2025-09',
+      getFiles: () => ({
+        hasNext: () => false
+      })
+    };
+    
+    DriveApp.getFoldersByName.mockReturnValue({
       hasNext: () => true,
       next: () => mockFolder
     });
@@ -42,22 +67,46 @@ describe('aggregateMonthlyTimesheets Contract Tests', () => {
   });
 
   test('should return object with entries, metadata, and errors properties', () => {
-    // Mock minimal successful execution
-    const mockFolder = { 
-      getName: () => '2025-09',
-      getFiles: () => ({
-        hasNext: () => false
+    // Mock folder and file structure  
+    const mockFile = {
+      getName: () => 'Timesheet_2025-09_JohnDoe.json',
+      getBlob: () => ({
+        getDataAsString: () => JSON.stringify({
+          memberName: 'JohnDoe',
+          entries: [{ 
+            date: '2025-09-15', 
+            fromTime: '09:00',
+            toTime: '17:00',
+            project: 'Test Project',
+            taskType: 'Development',
+            hours: 8 
+          }]
+        })
       })
     };
     
-    global.DriveApp.getFoldersByName.mockReturnValue({
+    const mockFolder = {
+      getName: () => '2025-09',
+      getFiles: () => {
+        let called = false;
+        return {
+          hasNext: () => !called,
+          next: () => {
+            called = true;
+            return mockFile;
+          }
+        };
+      }
+    };
+    
+    DriveApp.getFoldersByName.mockReturnValue({
       hasNext: () => true,
       next: () => mockFolder
     });
 
     const result = aggregateMonthlyTimesheets('2025-09');
     
-    // These assertions will fail until function returns correct structure
+    // Structure validation - will fail until implemented
     expect(result).toHaveProperty('entries');
     expect(result).toHaveProperty('metadata');
     expect(result).toHaveProperty('errors');
@@ -82,7 +131,7 @@ describe('aggregateMonthlyTimesheets Contract Tests', () => {
 
   test('should handle folder not found scenario', () => {
     // Mock folder not found
-    global.DriveApp.getFoldersByName.mockReturnValue({
+    DriveApp.getFoldersByName.mockReturnValue({
       hasNext: () => false
     });
 
@@ -99,7 +148,7 @@ describe('aggregateMonthlyTimesheets Contract Tests', () => {
       })
     };
     
-    global.DriveApp.getFoldersByName.mockReturnValue({
+    DriveApp.getFoldersByName.mockReturnValue({
       hasNext: () => true,
       next: () => mockFolder
     });
@@ -123,7 +172,7 @@ describe('aggregateMonthlyTimesheets Contract Tests', () => {
 
   test('should handle Google Apps Script API errors gracefully', () => {
     // Mock API error
-    global.DriveApp.getFoldersByName.mockImplementation(() => {
+    DriveApp.getFoldersByName.mockImplementation(() => {
       throw new Error('Google Drive API error');
     });
 

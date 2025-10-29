@@ -871,6 +871,8 @@ function applySummary(data, summaryType, columns) {
       return aggregateByDay(data);
     case 'PROJECT_TOTALS':
       return aggregateByProject(data);
+    case 'MEMBER_PROJECT_BREAKDOWN':
+      return aggregateByMemberProject(data);
     default:
       return data; // No summary
   }
@@ -1018,6 +1020,69 @@ function aggregateByProject(data) {
       'Members Count': project['Members'].size,
       'Members': Array.from(project['Members']).join(', ')
     };
+  });
+}
+
+/**
+ * Aggregate data by member and project to show percentage breakdown
+ * @param {Array} data - Data to aggregate
+ * @returns {Array} Aggregated data with percentage breakdown
+ */
+function aggregateByMemberProject(data) {
+  const memberProjectTotals = {};
+  const memberTotals = {};
+  
+  // First pass: calculate totals per member per project and overall member totals
+  data.forEach(function(record) {
+    const memberName = record['Member Name'] || record.member || 'Unknown';
+    const project = record['Project Name'] || record.project || 'Unknown';
+    const key = `${memberName}|${project}`;
+    
+    // Calculate hours if available
+    const hours = calculateHours(record['Start Time'], record['End Time']);
+    
+    // Initialize member-project combination
+    if (!memberProjectTotals[key]) {
+      memberProjectTotals[key] = {
+        memberName: memberName,
+        project: project,
+        hours: 0,
+        entries: 0
+      };
+    }
+    
+    // Initialize member total
+    if (!memberTotals[memberName]) {
+      memberTotals[memberName] = 0;
+    }
+    
+    // Add to totals
+    if (hours > 0) {
+      memberProjectTotals[key].hours += hours;
+      memberTotals[memberName] += hours;
+    }
+    memberProjectTotals[key].entries++;
+  });
+  
+  // Second pass: calculate percentages and format output
+  return Object.values(memberProjectTotals).map(function(item) {
+    const memberTotal = memberTotals[item.memberName];
+    const percentage = memberTotal > 0 ? Math.round((item.hours / memberTotal) * 100 * 100) / 100 : 0;
+    
+    return {
+      'Member Name': item.memberName,
+      'Project Name': item.project,
+      'Hours': Math.round(item.hours * 100) / 100,
+      'Percentage': `${percentage}%`,
+      'Total Member Hours': Math.round(memberTotal * 100) / 100,
+      'Entries': item.entries
+    };
+  }).sort(function(a, b) {
+    // Sort by member name first, then by hours descending
+    if (a['Member Name'] !== b['Member Name']) {
+      return a['Member Name'].localeCompare(b['Member Name']);
+    }
+    return b['Hours'] - a['Hours'];
   });
 }
 

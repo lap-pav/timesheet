@@ -852,3 +852,82 @@ For issues related to:
 - **Google Apps Script platform**: Check [Google Apps Script documentation](https://developers.google.com/apps-script)
 - **API limits and quotas**: Review [Google Apps Script quotas](https://developers.google.com/apps-script/guides/services/quotas)
 - **Implementation bugs**: Review the error logs and contract specifications in the feature documentation
+
+---
+
+# AI-Powered Report Generation Deployment
+
+## Overview
+This section covers the deployment of the AI-powered report generation feature that allows users to create custom timesheet reports using natural language descriptions.
+
+## Additional Prerequisites for AI Features
+- Access to Google Gemini AI API
+- Access to Claude AI API (Anthropic)
+- Administrative access to configure API keys
+
+## AI Feature Setup
+
+### Step 1: Configure AI Service API Keys
+1. **Get API Keys**:
+   - **Gemini**: Visit [Google AI Studio](https://makersuite.google.com/app/apikey) to create an API key
+   - **Claude**: Visit [Anthropic Console](https://console.anthropic.com/) to create an API key
+
+2. **Store Keys Securely** (run once in Apps Script editor):
+   ```javascript
+   function setupMyAIKeys() {
+     setupAICredentials(
+       'your-gemini-api-key-here',
+       'your-claude-api-key-here'
+     );
+   }
+   ```
+
+3. **Verify Configuration**:
+   ```javascript
+   function checkMyAIKeys() {
+     console.log(checkAICredentials());
+   }
+   ```
+
+### Step 2: Test AI Integration
+1. **Test Menu Access**:
+   - Refresh your Google Spreadsheet
+   - Look for "Create AI Report" in the Custom Menu
+   
+2. **Test Basic Functionality**:
+   - Click "Create AI Report"
+   - Enter a simple request like: "Show hours by employee"
+   - Verify the system responds appropriately
+
+### AI Configuration Options
+Modify these constants in `main.js` to adjust AI behavior:
+
+```javascript
+const AI_CONFIG = {
+  PRIMARY_SERVICE: 'gemini',     // Primary AI service
+  FALLBACK_SERVICE: 'claude',   // Fallback service
+  CACHE_TTL_HOURS: 24,          // Cache duration
+  MAX_INPUT_LENGTH: 1000,       // Max input length
+  REQUEST_TIMEOUT_MS: 30000,    // Request timeout
+  MAX_RETRIES: 2                // Retry attempts
+};
+```
+
+### AI-Specific Troubleshooting
+
+**"Create AI Report" menu doesn't appear**:
+- Refresh the spreadsheet
+- Check that `onOpen()` function includes AI menu items
+- Verify no syntax errors in the script
+
+**AI service errors**:
+- Verify API keys are valid and have quota
+- Check internet connectivity
+- Try simpler natural language requests
+- Review AI service status pages
+
+### AI Security Considerations
+- API keys are stored using PropertiesService with base64 encoding
+- Keys are not accessible to spreadsheet users
+- AI requests are rate-limited by external services
+- Generated reports follow existing permission model
