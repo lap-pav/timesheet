@@ -32,12 +32,34 @@ function getMonthlyFolder(yearMonth) {
       return result;
     }
     
-    // Search for folders matching the month name
-    const folders = DriveApp.getFoldersByName(yearMonth);
+    // Get the folder where this script is located
+    let scriptFolder;
+    try {
+      // Get the current script file and its parent folder
+      const scriptFile = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId());
+      scriptFolder = scriptFile.getParents().next();
+    } catch (scriptError) {
+      // Cannot determine script location - fail cleanly
+      result.errors.push({
+        type: ERROR_TYPES.SYSTEM_FAILURE,
+        source: 'SCRIPT_LOCATION',
+        message: 'Could not determine script location: ' + scriptError.message + '. Unable to search for monthly folder.',
+        severity: SEVERITY_LEVELS.ERROR,
+        timestamp: new Date().toISOString()
+      });
+      result.metadata.searchTimeMs = Date.now() - startTime;
+      return result;
+    }
+    
+    // Search for folders matching the month name within the script's parent folder
+    const subfolders = scriptFolder.getFolders();
     const foundFolders = [];
     
-    while (folders.hasNext()) {
-      foundFolders.push(folders.next());
+    while (subfolders.hasNext()) {
+      const folder = subfolders.next();
+      if (folder.getName() === yearMonth) {
+        foundFolders.push(folder);
+      }
     }
     
     result.metadata.foldersFound = foundFolders.length;
@@ -47,7 +69,7 @@ function getMonthlyFolder(yearMonth) {
       result.errors.push({
         type: ERROR_TYPES.FOLDER_ACCESS,
         source: 'FOLDER_DISCOVERY',
-        message: 'No folder found with name \'' + yearMonth + '\'. Please ensure the monthly folder exists in Google Drive.',
+        message: 'No folder found with name \'' + yearMonth + '\' in the script location. Please ensure the monthly folder exists in the same folder as the script.',
         severity: SEVERITY_LEVELS.ERROR,
         timestamp: new Date().toISOString()
       });
@@ -58,7 +80,7 @@ function getMonthlyFolder(yearMonth) {
       result.errors.push({
         type: ERROR_TYPES.FOLDER_ACCESS,
         source: 'FOLDER_DISCOVERY',
-        message: 'Found ' + foundFolders.length + ' folders named \'' + yearMonth + '\'. Using the first one found.',
+        message: 'Found ' + foundFolders.length + ' folders named \'' + yearMonth + '\' in the script location. Using the first one found.',
         severity: SEVERITY_LEVELS.WARNING,
         timestamp: new Date().toISOString(),
         details: {
@@ -101,7 +123,7 @@ function getMonthlyFolder(yearMonth) {
 
 /**
  * Enumerates all timesheet files in a given folder
- * @param {DriveApp.Folder} folder - Google Drive folder to search
+ * @param {GoogleAppsScript.Drive.Folder} folder - Google Drive folder to search
  * @returns {Object} Result object with files array and any errors
  */
 function getTimesheetFiles(folder) {
@@ -300,11 +322,10 @@ function readTimesheetData(timesheetFile) {
  * Validates a single timesheet entry against expected format and rules
  * @param {Array} entry - Raw row data from spreadsheet
  * @param {string} memberName - Member name for context
- * @param {Array} headers - Column headers for mapping
  * @param {number} rowIndex - Row index for error reporting
  * @returns {Object} Validation result with isValid flag and errors
  */
-function validateTimesheetEntry(entry, memberName, headers, rowIndex) {
+function validateTimesheetEntry(entry, memberName, rowIndex) {
   const result = {
     isValid: true,
     errors: [],
@@ -344,10 +365,40 @@ function validateTimesheetEntry(entry, memberName, headers, rowIndex) {
     }
     
     // Map entry to expected columns
-    const mappedEntry = mapEntryToColumns(entry, headers);
+    const mappedEntry = mapEntryToColumns(entry);
     
-    // Validate required fields
-    const requiredFields = ['date', 'from_time', 'to_time', 'project', 'task_type'];
+    // Check if this is actually a meaningful entry (has any non-empty fields or OFF is TRUE)
+    const regularFields = ['date', 'from_time', 'to_time', 'project', 'task_type', 'description', 'tc_from_time', 'tc_to_time'];
+    const hasRegularData = regularFields.some(field => {
+      const value = mappedEntry[field];
+      return value && String(value).trim() !== '';
+    });
+    
+    // Check if OFF field has any value selected (meaningful for time-off entries)
+    const offFieldValue = String(mappedEntry.off).trim();
+    const isOffDay = offFieldValue && offFieldValue !== '';
+    
+    const hasMeaningfulData = hasRegularData || isOffDay;
+    
+    if (!hasMeaningfulData) {
+      // This is effectively an empty row, skip validation
+      result.isValid = false;
+      result.errors.push({
+        type: ERROR_TYPES.INVALID_ENTRY,
+        source: 'ENTRY_VALIDATION',
+        message: `No meaningful data in row ${rowIndex}`,
+        severity: SEVERITY_LEVELS.WARNING,
+        timestamp: new Date().toISOString(),
+        memberName: memberName,
+        rowIndex: rowIndex
+      });
+      return result;
+    }
+    
+    // Validate always-required fields
+    const requiredFields = TIMESHEET_TEMPLATE_CONFIG.REQUIRED_FIELDS.map(function(field) {
+      return AGGREGATION_CONFIG.FIELD_MAPPINGS[field];
+    }).filter(Boolean);
     
     for (const field of requiredFields) {
       const value = mappedEntry[field];
@@ -363,6 +414,30 @@ function validateTimesheetEntry(entry, memberName, headers, rowIndex) {
           rowIndex: rowIndex,
           field: field
         });
+      }
+    }
+    
+    // Validate conditionally required fields (only required if not OFF day)
+    if (!isOffDay && TIMESHEET_TEMPLATE_CONFIG.CONDITIONALLY_REQUIRED_FIELDS) {
+      const conditionalFields = TIMESHEET_TEMPLATE_CONFIG.CONDITIONALLY_REQUIRED_FIELDS.map(function(field) {
+        return AGGREGATION_CONFIG.FIELD_MAPPINGS[field];
+      }).filter(Boolean);
+      
+      for (const field of conditionalFields) {
+        const value = mappedEntry[field];
+        if (!value || String(value).trim() === '') {
+          result.isValid = false;
+          result.errors.push({
+            type: ERROR_TYPES.INVALID_ENTRY,
+            source: 'CONDITIONAL_FIELD_VALIDATION',
+            message: `Missing required field '${field}' in row ${rowIndex} (required unless OFF time)`,
+            severity: SEVERITY_LEVELS.ERROR,
+            timestamp: new Date().toISOString(),
+            memberName: memberName,
+            rowIndex: rowIndex,
+            field: field
+          });
+        }
       }
     }
     
@@ -449,6 +524,42 @@ function validateTimesheetEntry(entry, memberName, headers, rowIndex) {
       }
     }
     
+    // Validate TC time pair consistency (both TC times should be present together)
+    const tcFromTime = mappedEntry.tc_from_time && String(mappedEntry.tc_from_time).trim();
+    const tcToTime = mappedEntry.tc_to_time && String(mappedEntry.tc_to_time).trim();
+    
+    if ((tcFromTime && !tcToTime) || (!tcFromTime && tcToTime)) {
+      result.isValid = false;
+      result.errors.push({
+        type: ERROR_TYPES.INVALID_ENTRY,
+        source: 'TC_TIME_VALIDATION',
+        message: `TC From Time and TC To Time must be provided together in row ${rowIndex}. Found: TC From Time='${tcFromTime || '(empty)'}', TC To Time='${tcToTime || '(empty)'}'`,
+        severity: SEVERITY_LEVELS.ERROR,
+        timestamp: new Date().toISOString(),
+        memberName: memberName,
+        rowIndex: rowIndex,
+        field: tcFromTime ? 'tc_to_time' : 'tc_from_time'
+      });
+    }
+    
+    // Validate TC time logic (tc_from_time < tc_to_time) if both are present
+    if (tcFromTime && tcToTime) {
+      const tcFromMinutes = parseTimeToMinutes(tcFromTime);
+      const tcToMinutes = parseTimeToMinutes(tcToTime);
+      
+      if (tcFromMinutes !== null && tcToMinutes !== null && tcFromMinutes >= tcToMinutes) {
+        result.warnings.push({
+          type: ERROR_TYPES.INVALID_ENTRY,
+          source: 'TC_TIME_LOGIC_VALIDATION',
+          message: `TC From time (${tcFromTime}) should be before TC To time (${tcToTime}) in row ${rowIndex}`,
+          severity: SEVERITY_LEVELS.WARNING,
+          timestamp: new Date().toISOString(),
+          memberName: memberName,
+          rowIndex: rowIndex
+        });
+      }
+    }
+    
   } catch (error) {
     result.isValid = false;
     result.errors.push({
@@ -466,12 +577,11 @@ function validateTimesheetEntry(entry, memberName, headers, rowIndex) {
 }
 
 /**
- * Maps a raw entry array to expected column structure
+ * Maps a raw entry array to expected column structure using fixed position-based mapping
  * @param {Array} entry - Raw row data
- * @param {Array} headers - Column headers
  * @returns {Object} Mapped entry object
  */
-function mapEntryToColumns(entry, headers) {
+function mapEntryToColumns(entry) {
   const mapped = {
     date: '',
     from_time: '',
@@ -480,26 +590,19 @@ function mapEntryToColumns(entry, headers) {
     task_type: '',
     description: '',
     tc_from_time: '',
-    tc_to_time: ''
+    tc_to_time: '',
+    off: ''
   };
   
-  // Map each header to expected fields
-  headers.forEach(function(header, index) {
+  // Position-based mapping using fixed column order
+  TIMESHEET_TEMPLATE_CONFIG.COLUMN_ORDER.forEach(function(fieldName, index) {
     if (index >= entry.length) return;
     
-    const headerLower = String(header).toLowerCase().trim();
     const value = entry[index];
+    const targetField = AGGREGATION_CONFIG.FIELD_MAPPINGS[fieldName];
     
-    // Map headers to standard fields
-    for (const [fieldName, patterns] of Object.entries(AGGREGATION_CONFIG.EXPECTED_HEADERS)) {
-      if (patterns.some(function(pattern) { return headerLower.includes(pattern.toLowerCase()); })) {
-        // Dynamic field mapping using configuration
-        const targetField = AGGREGATION_CONFIG.FIELD_MAPPINGS[fieldName];
-        if (targetField) {
-          mapped[targetField] = value;
-        }
-        break;
-      }
+    if (targetField) {
+      mapped[targetField] = value || '';
     }
   });
   
@@ -553,17 +656,20 @@ function parseTimeToMinutes(timeStr) {
 }
 
 /**
- * Normalizes a validated timesheet entry to standard format
- * @param {Array} entry - Raw row data from spreadsheet
- * @param {string} memberName - Member name for the entry
- * @param {Array} headers - Column headers for mapping
- * @param {number} rowIndex - Row index for context
+ * Normalizes a timesheet entry to standard format
+ * @param {Array} entry - Raw row data
+ * @param {string} memberName - Member name
+ * @param {number} rowIndex - Row index for error reporting
  * @returns {Object} Normalized entry object
  */
-function normalizeTimesheetEntry(entry, memberName, headers, rowIndex) {
+function normalizeTimesheetEntry(entry, memberName, rowIndex) {
   try {
     // Map entry to expected columns
-    const mappedEntry = mapEntryToColumns(entry, headers);
+    const mappedEntry = mapEntryToColumns(entry);
+    
+    // Normalize OFF flag (any selected value means time-off)
+    const offValue = String(mappedEntry.off).trim();
+    const isOffDay = offValue && offValue !== '';
     
     // Create normalized entry
     const normalized = {
@@ -576,6 +682,8 @@ function normalizeTimesheetEntry(entry, memberName, headers, rowIndex) {
       description: normalizeText(mappedEntry.description),
       tc_from_time: normalizeTime(mappedEntry.tc_from_time) || '',
       tc_to_time: normalizeTime(mappedEntry.tc_to_time) || '',
+      off: isOffDay,
+      off_type: isOffDay ? offValue : '',
       
       // Metadata
       source_file: memberName,
@@ -778,7 +886,7 @@ function processTimesheetFile(timesheetFile) {
       const rowIndex = index + 2; // +2 because: +1 for array index, +1 for header row
       
       // Validate the entry
-      const validation = validateTimesheetEntry(row, timesheetFile.memberName, readResult.headers, rowIndex);
+      const validation = validateTimesheetEntry(row, timesheetFile.memberName, rowIndex);
       
       // Add validation errors/warnings to result
       result.errors.push(...validation.errors);
@@ -786,12 +894,13 @@ function processTimesheetFile(timesheetFile) {
       
       if (validation.isValid) {
         // Normalize the valid entry
-        const normalized = normalizeTimesheetEntry(row, timesheetFile.memberName, readResult.headers, rowIndex);
+        const normalized = normalizeTimesheetEntry(row, timesheetFile.memberName, rowIndex);
         result.entries.push(normalized);
         result.metadata.validEntries++;
         result.metadata.normalizedEntries++;
       } else {
         result.metadata.invalidEntries++;
+        console.log(`Error row data for ${timesheetFile.fileName} row ${rowIndex}:`, [row, timesheetFile.memberName, rowIndex]);
       }
     });
     
@@ -799,6 +908,7 @@ function processTimesheetFile(timesheetFile) {
     
     // Log processing summary
     console.log(`Processed ${timesheetFile.fileName}: ${result.metadata.validEntries} valid entries, ${result.metadata.invalidEntries} invalid entries`);
+    console.log(`Errors and warnings for ${timesheetFile.fileName}:`, result.errors);
     
   } catch (error) {
     result.errors.push({
@@ -1100,7 +1210,7 @@ function generateErrorSummary(errors) {
  * @returns {Array} Array of internal field names
  */
 function getExpectedDataFields() {
-  const allFields = [...TIMESHEET_TEMPLATE_CONFIG.REQUIRED_FIELDS, ...TIMESHEET_TEMPLATE_CONFIG.OPTIONAL_FIELDS];
+  const allFields = [...TIMESHEET_TEMPLATE_CONFIG.REQUIRED_FIELDS, ...TIMESHEET_TEMPLATE_CONFIG.OPTIONAL_FIELDS, ...TIMESHEET_TEMPLATE_CONFIG.CONDITIONALLY_REQUIRED_FIELDS];
   return allFields.map(field => AGGREGATION_CONFIG.FIELD_MAPPINGS[field]).filter(Boolean);
 }
 
@@ -1211,7 +1321,7 @@ function templateDiagnostic() {
     // Try to get folder
     const folderResult = getMonthlyFolder(time);
     if (!folderResult.folder) {
-      console.log('❌ No monthly folder found for testing');
+      console.log('❌ No monthly folder found for testing: ', folderResult.errors);
       console.log('Create a test folder and timesheet files first');
       return;
     }

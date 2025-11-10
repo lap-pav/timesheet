@@ -49,13 +49,31 @@ const TIMESHEET_TEMPLATE_CONFIG = {
   TEMPLATE_VERSION: '1.0',
   TEMPLATE_LAST_UPDATED: '2025-10-27',
   
+  // Fixed column order for position-based mapping (eliminates header text dependency)
+  // TO UPDATE TEMPLATE: Modify this order when template columns change
+  COLUMN_ORDER: [
+    'DATE',        // Column 0: Date
+    'FROM_TIME',   // Column 1: From Time  
+    'TO_TIME',     // Column 2: To Time
+    'PROJECT',     // Column 3: Project
+    'TASK_TYPE',   // Column 4: Task Type
+    'DESCRIPTION', // Column 5: Description (optional)
+    'TC_FROM_TIME', // Column 6: TC From Time (optional)
+    'TC_TO_TIME',  // Column 7: TC To Time (optional)
+    'OFF'          // Column 8: Off Day flag (boolean - true means time off)
+  ],
+  
   // Required fields that must be present in every timesheet
   // TO UPDATE TEMPLATE: Add/remove required fields here
-  REQUIRED_FIELDS: ['DATE', 'FROM_TIME', 'TO_TIME', 'PROJECT'],
+  REQUIRED_FIELDS: ['DATE', 'FROM_TIME', 'TO_TIME'],
+  
+  // Conditionally required fields (required unless OFF is true)
+  // TO UPDATE TEMPLATE: Add/remove conditionally required fields here
+  CONDITIONALLY_REQUIRED_FIELDS: ['PROJECT', 'TASK_TYPE'],
   
   // Optional fields that may or may not be present
   // TO UPDATE TEMPLATE: Add/remove optional fields here  
-  OPTIONAL_FIELDS: ['TASK_TYPE', 'DESCRIPTION', 'TC_FROM_TIME', 'TC_TO_TIME'],
+  OPTIONAL_FIELDS: ['DESCRIPTION', 'TC_FROM_TIME', 'TC_TO_TIME', 'OFF'],
   
   // Field validation rules
   // TO UPDATE TEMPLATE: Modify validation rules for new/changed fields
@@ -90,6 +108,21 @@ const TIMESHEET_TEMPLATE_CONFIG = {
       required: false,
       type: 'text',
       maxLength: 500
+    },
+    TC_FROM_TIME: {
+      required: false,
+      type: 'time',
+      patterns: [/^\d{1,2}:\d{2}$/, /^\d{1,2}:\d{2}:\d{2}$/, /^\d{1,2}:\d{2}\s*(AM|PM)$/i]
+    },
+    TC_TO_TIME: {
+      required: false,
+      type: 'time',
+      patterns: [/^\d{1,2}:\d{2}$/, /^\d{1,2}:\d{2}:\d{2}$/, /^\d{1,2}:\d{2}\s*(AM|PM)$/i]
+    },
+    OFF: {
+      required: false,
+      type: 'option',
+      description: 'Any selected value indicates time-off (e.g., Vacation, Sick Leave, Personal Day, Holiday, etc.)'
     }
   }
 };
@@ -119,7 +152,8 @@ const AGGREGATION_CONFIG = {
     TASK_TYPE: ['task type', 'task', 'type', 'activity', 'work type'],
     DESCRIPTION: ['description', 'desc', 'details', 'notes', 'comments'],
     TC_FROM_TIME: ['tc from time', 'tc start', 'timecard from'],
-    TC_TO_TIME: ['tc to time', 'tc end', 'timecard to']
+    TC_TO_TIME: ['tc to time', 'tc end', 'timecard to'],
+    OFF: ['off', 'time off', 'off day', 'day off', 'leave']
   },
   
   // Field mapping from header keys to internal field names
@@ -132,7 +166,8 @@ const AGGREGATION_CONFIG = {
     TASK_TYPE: 'task_type',
     DESCRIPTION: 'description',
     TC_FROM_TIME: 'tc_from_time',
-    TC_TO_TIME: 'tc_to_time'
+    TC_TO_TIME: 'tc_to_time',
+    OFF: 'off'
   },
   
   // Data validation
@@ -178,7 +213,7 @@ const REPORT_CONFIG = {
     SUMMARY_TYPE: 6,      // G: Summary Type (SUM/COUNT/AVG/NONE)
     OUTPUT_STRUCTURE: 7,  // H: Output Structure (SINGLE_SHEET, SHEET_PER_PROJECT, etc.)
     GROUPING_FIELD: 8,    // I: Grouping Field (for multi-sheet/file outputs)
-    ENABLED: 9,           // J: Enabled (TRUE/FALSE)
+    INACTIVE: 9,          // J: In-active (Checkbox - checked means inactive)
   },
   
   // Validation limits
@@ -240,8 +275,8 @@ const REPORT_CONFIG = {
     // Time card variations
     'TC Start Time': 'tc_from_time',
     'TC End Time': 'tc_to_time',
-    'TimeCard Start': 'tc_from_time',
-    'TimeCard End': 'tc_to_time',
+    'To Customer Start': 'tc_from_time',
+    'To Customer End': 'tc_to_time',
     
     // System fields
     'Source File': 'source_file',
@@ -298,7 +333,9 @@ const REPORT_CONFIG = {
     'Date': 'record.date',
     'Start Time': 'formatTime(record.from_time)',
     'End Time': 'formatTime(record.to_time)', 
-    'Hours': 'calculateHours(record.from_time, record.to_time)',
+    'Hours': 'calculateWorkingHours(record.from_time, record.to_time, record.off)',
+    'Off Hours': 'calculateOffHours(record.from_time, record.to_time, record.off)',
+    'Unpaid Off Hours': 'calculateUnpaidOffHours(record.from_time, record.to_time, record.off, record.off_type)',
     'Project Name': 'record.project',
     'Task Type': 'record.task_type',
     'Task Description': 'record.description',
@@ -308,16 +345,55 @@ const REPORT_CONFIG = {
   }
 };
 
+// Helper functions for expression functions (must be defined first)
+function parseTimeToMinutes(timeStr) {
+  if (!timeStr) return null;
+  
+  const timeString = String(timeStr).trim().toUpperCase();
+  
+  // Handle AM/PM format: "9:00 AM", "1:30 PM", etc.
+  const ampmPattern = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/;
+  const ampmMatch = timeString.match(ampmPattern);
+  if (ampmMatch) {
+    let hours = parseInt(ampmMatch[1]);
+    const minutes = parseInt(ampmMatch[2]);
+    const period = ampmMatch[3];
+    
+    // Convert to 24-hour format
+    if (period === 'AM' && hours === 12) {
+      hours = 0;
+    } else if (period === 'PM' && hours !== 12) {
+      hours += 12;
+    }
+    
+    return hours * 60 + minutes;
+  }
+  
+  // Handle 24-hour format: "09:00", "13:30", etc.
+  const timePattern = /^(\d{1,2}):(\d{2})$/;
+  const match = timeString.match(timePattern);
+  if (match) {
+    return parseInt(match[1]) * 60 + parseInt(match[2]);
+  }
+  
+  return null;
+}
+
+function normalizeTime(timeValue) {
+  if (!timeValue) return '';
+  const timeStr = String(timeValue).trim();
+  const timePattern = /^(\d{1,2}):(\d{2})$/;
+  const match = timeStr.match(timePattern);
+  if (match) {
+    const hours = match[1].padStart(2, '0');
+    const minutes = match[2];
+    return hours + ':' + minutes;
+  }
+  return timeStr;
+}
+
 // Built-in transformation functions registry
 const EXPRESSION_FUNCTIONS = {
-  calculateHours: function(startTime, endTime) {
-    if (!startTime || !endTime) return 0;
-    const startMinutes = parseTimeToMinutes(startTime);
-    const endMinutes = parseTimeToMinutes(endTime);
-    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return 0;
-    return Math.round((endMinutes - startMinutes) / 60 * 100) / 100;
-  },
-  
   formatDate: function(dateValue) {
     if (!dateValue) return '';
     const date = new Date(dateValue);
@@ -383,31 +459,74 @@ const EXPRESSION_FUNCTIONS = {
   
   defaultValue: function(value, fallback) {
     return (value !== null && value !== undefined && value !== '') ? value : fallback;
-  }
+  },
+  
+  // Customer time tracking functions
+  calculateCustomerHours: function(tcStartTime, tcEndTime) {
+    if (!tcStartTime || !tcEndTime) return 0;
+    const startMinutes = parseTimeToMinutes(tcStartTime);
+    const endMinutes = parseTimeToMinutes(tcEndTime);
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return 0;
+    return Math.round((endMinutes - startMinutes) / 60 * 100) / 100;
+  },
+  
+  // Single-record time calculation functions (replaces entries-based functions)
+  calculateWorkingHours: function(fromTime, toTime, isOff) {
+    // Only calculate hours if it's not a time-off record
+    if (isOff === true || isOff === 'true') return 0;
+    if (!fromTime || !toTime) return 0;
+    const startMinutes = parseTimeToMinutes(fromTime);
+    const endMinutes = parseTimeToMinutes(toTime);
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return 0;
+    return Math.round((endMinutes - startMinutes) / 60 * 100) / 100;
+  },
+
+  // Helper function to calculate hours within business hours (08:00-12:00 and 13:00-17:00)
+  calculateBusinessHoursOverlap: function(fromTime, toTime) {
+    if (!fromTime || !toTime) return 0;
+    
+    const startMinutes = parseTimeToMinutes(fromTime);
+    const endMinutes = parseTimeToMinutes(toTime);
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return 0;
+    
+    // Business hours: 08:00-12:00 and 13:00-17:00 (excludes lunch break)
+    const morningStart = 8 * 60;    // 08:00 = 480 minutes
+    const morningEnd = 12 * 60;     // 12:00 = 720 minutes
+    const afternoonStart = 13 * 60; // 13:00 = 780 minutes
+    const afternoonEnd = 17 * 60;   // 17:00 = 1020 minutes
+    
+    let totalHours = 0;
+    
+    // Calculate morning session overlap (08:00-12:00)
+    const morningOverlapStart = Math.max(startMinutes, morningStart);
+    const morningOverlapEnd = Math.min(endMinutes, morningEnd);
+    if (morningOverlapEnd > morningOverlapStart) {
+      totalHours += (morningOverlapEnd - morningOverlapStart) / 60;
+    }
+    
+    // Calculate afternoon session overlap (13:00-17:00)
+    const afternoonOverlapStart = Math.max(startMinutes, afternoonStart);
+    const afternoonOverlapEnd = Math.min(endMinutes, afternoonEnd);
+    if (afternoonOverlapEnd > afternoonOverlapStart) {
+      totalHours += (afternoonOverlapEnd - afternoonOverlapStart) / 60;
+    }
+    
+    return Math.round(totalHours * 100) / 100;
+  },
+
+  calculateOffHours: function(fromTime, toTime, isOff) {
+    // Only calculate hours if it's a time-off record
+    if (!(isOff === true || isOff === 'true')) return 0;
+    return EXPRESSION_FUNCTIONS.calculateBusinessHoursOverlap(fromTime, toTime);
+  },
+
+  calculateUnpaidOffHours: function(fromTime, toTime, isOff, offType) {
+    // Only calculate hours if it's an unpaid time-off record
+    if (!(isOff === true || isOff === 'true')) return 0;
+    if (!offType || String(offType).toLowerCase() !== 'unpaid leave') return 0;
+    return EXPRESSION_FUNCTIONS.calculateBusinessHoursOverlap(fromTime, toTime);
+  },
 };
-
-// Helper function for time parsing (used by calculateHours)
-function parseTimeToMinutes(timeStr) {
-  if (!timeStr) return null;
-  const timePattern = /^(\d{1,2}):(\d{2})$/;
-  const match = String(timeStr).match(timePattern);
-  if (!match) return null;
-  return parseInt(match[1]) * 60 + parseInt(match[2]);
-}
-
-// Helper function for time normalization (used by formatTime)
-function normalizeTime(timeValue) {
-  if (!timeValue) return '';
-  const timeStr = String(timeValue).trim();
-  const timePattern = /^(\d{1,2}):(\d{2})$/;
-  const match = timeStr.match(timePattern);
-  if (match) {
-    const hours = match[1].padStart(2, '0');
-    const minutes = match[2];
-    return hours + ':' + minutes;
-  }
-  return timeStr;
-}
 
 // Error types for consistent error handling
 const ERROR_TYPES = {
@@ -492,7 +611,6 @@ const AI_ENDPOINTS = {
  * Based on REPORT_CONFIGS_EXAMPLES.md format
  */
 const AI_REPORT_CONFIG = {
-  SHEET_NAME: 'Report Config',
   MAX_REPORT_NAME_LENGTH: 50,
   MAX_DESCRIPTION_LENGTH: 200,
   VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS', 'MEMBER_PROJECT_BREAKDOWN'],
@@ -512,14 +630,10 @@ const AI_FIELD_MAPPING = {
   'project': 'Project Name',
   'task_type': 'Task Type',
   'description': 'Task Description',
-  'hours': 'Hours',
-  'client': 'Client',
-  'location': 'Location',
-  'billing_rate': 'Billing Rate',
-  'overtime': 'Overtime',
-  'notes': 'Notes',
-  'status': 'Status',
-  'approval_date': 'Approval Date'
+  'tc_from_time': 'Customer From Time',
+  'tc_to_time': 'Customer To Time',
+  'off': 'Time Off Flag',
+  'off_type': 'Time Off Type'
 };
 
 /**
@@ -527,26 +641,11 @@ const AI_FIELD_MAPPING = {
  * Based on expression-functions.md
  */
 const AI_EXPRESSION_FUNCTIONS = [
-  'calculateHours(from_time, to_time)',
+  'calculateCustomerHours(tc_from_time, tc_to_time)',
+  'calculateWorkingHours(from_time, to_time, off)',
+  'calculateOffHours(from_time, to_time, off)',
+  'calculateUnpaidOffHours(from_time, to_time, off, off_type)',
+  'concat(...args)',
   'formatDate(date, format)',
   'formatTime(time, format)',
-  'formatCurrency(amount, currency)',
-  'formatNumber(number, decimals)',
-  'filterByDateRange(entries, start_date, end_date)',
-  'groupByField(entries, field)',
-  'sumByField(entries, field)',
-  'countByField(entries, field)',
-  'averageByField(entries, field)',
-  'sortByField(entries, field, order)',
-  'calculateOvertime(hours, standard_hours)',
-  'calculateTotalCost(hours, rate)',
-  'isWeekend(date)',
-  'isBusinessDay(date)',
-  'getWeekNumber(date)',
-  'getMonthName(date)',
-  'getQuarter(date)',
-  'daysInMonth(date)',
-  'workingDaysInMonth(date)',
-  'age(date1, date2)',
-  'businessDaysDifference(date1, date2)'
 ];

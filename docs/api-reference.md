@@ -494,8 +494,8 @@ Standard normalized timesheet entry structure:
   project: "Project Alpha",            // Project name/identifier
   task_type: "Development",            // Type of work performed
   description: "Working on features", // Detailed description
-  tc_from_time: "09:00",              // Timecard start time (optional)
-  tc_to_time: "17:30",                // Timecard end time (optional)
+  tc_from_time: "09:00",              // To Customer Start time (optional)
+  tc_to_time: "17:30",                // To Customer End time (optional)
   source_file: "JohnDoe",             // Source filename
   row_index: 5,                       // Original row number
   processed_at: "2025-10-06T10:30:00.000Z" // Processing timestamp

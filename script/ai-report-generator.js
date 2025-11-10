@@ -160,7 +160,7 @@ function buildAIContext() {
     // 3. Get existing report configurations for examples  
     let existingReports = [];
     try {
-      const configSheet = spreadsheet.getSheetByName(AI_REPORT_CONFIG.SHEET_NAME);
+      const configSheet = spreadsheet.getSheetByName('Report Configs');
       if (configSheet) {
         const configData = configSheet.getDataRange().getValues();
         const configHeaders = configData[0];
@@ -187,6 +187,11 @@ function buildAIContext() {
       dataStructure: dataStructure,
       availableFields: Object.keys(AI_FIELD_MAPPING),
       fieldMappings: AI_FIELD_MAPPING,
+      standardizedFields: {
+        description: 'Timesheet data is processed into standardized fields regardless of header names',
+        position_based: 'Column mapping is position-based (A=Date, B=From Time, C=To Time, etc.)',
+        fields: AI_FIELD_MAPPING
+      },
       expressionFunctions: AI_EXPRESSION_FUNCTIONS,
       outputStructures: AI_REPORT_CONFIG.VALID_OUTPUT_STRUCTURES,
       summaryTypes: AI_REPORT_CONFIG.VALID_SUMMARY_TYPES,
@@ -237,6 +242,14 @@ ${JSON.stringify(context.dataStructure, null, 2)}
 FIELD MAPPINGS (Internal → Display):
 ${JSON.stringify(context.fieldMappings, null, 2)}
 
+STANDARDIZED DATA STRUCTURE:
+${JSON.stringify(context.standardizedFields, null, 2)}
+
+SPECIAL FIELDS:
+- off: Boolean field (true if any value selected in OFF column)
+- off_type: String containing the actual time-off type (e.g., "Vacation", "Sick Leave")
+- tc_from_time, tc_to_time: Customer-specific time tracking (optional)
+
 EXPRESSION FUNCTIONS:
 ${context.expressionFunctions.join('\n')}
 
@@ -278,21 +291,138 @@ IMPORTANT DISTINCTIONS:
 - For "totals PER project" (aggregated summary): Use PROJECT_TOTALS + SINGLE_SHEET
 
 EXAMPLE USER REQUESTS:
-- "Show me timesheet entries by member" → NONE + SHEET_PER_EMPLOYEE
-- "Show me member work hours summary" → MEMBER_TOTALS + SINGLE_SHEET
-- "Create detailed project reports" → NONE + SHEET_PER_PROJECT
-- "Show total hours per project" → PROJECT_TOTALS + SINGLE_SHEET
+- "Show me timesheet entries by member" → NONE + SHEET_PER_EMPLOYEE + group_by: ["member"]
+- "Show me member work hours summary" → MEMBER_TOTALS + SINGLE_SHEET + group_by: []
+- "Create detailed project reports" → NONE + SHEET_PER_PROJECT + group_by: ["project"]
+- "Show total hours per project" → PROJECT_TOTALS + SINGLE_SHEET + group_by: []
+- "Show time off report" → Use filterByTimeOff(entries, true) and include off_type field
+- "Show work time only" → Use filterByTimeOff(entries, false) to exclude time off
+- "Show Time off by member" → Use filterByOffType(entries, "Annual leave" | "Public holidays" | "Others (Paid by Social Insurance)" | "Unpaid leave") and group by member
+- "Count total working hours" → Use sumWorkingHours(entries) function
+- "Count total time off hours" → Use sumOffHours(entries) function
+- "Count total time off hours by type" → Use sumOffHoursByType(entries, off_type) function
 
-GROUPING RULES:
-- If output_structure is SINGLE_SHEET: group_by should be []
-- If output_structure contains PROJECT: group_by should be ["project"]  
-- If output_structure contains EMPLOYEE: group_by should be ["member"]
+
+CRITICAL GROUPING RULES (MUST FOLLOW):
+- If output_structure is SINGLE_SHEET: group_by MUST be []
+- If output_structure contains PROJECT: group_by MUST be ["project"]  
+- If output_structure contains EMPLOYEE: group_by MUST be ["member"]
+- NEVER omit the group_by field - it is REQUIRED in every response
 
 CRITICAL COLUMN REQUIREMENT:
 - If group_by contains any field, that field MUST be included in the fields array
 - Example: If group_by is ["member"], then fields must include a field with name "member"
 - Example: If group_by is ["project"], then fields must include a field with name "project"
 - Always include the grouping field as the first field in the fields array
+
+COMPLETE WORKING EXAMPLES:
+
+Example 1 - Sheet per Employee (MUST include group_by: ["member"]):
+{
+  "name": "Employee Timesheet Report",
+  "description": "Detailed timesheet entries organized by employee",
+  "output_structure": "SHEET_PER_EMPLOYEE",
+  "summary_type": "NONE",
+  "fields": [
+    {"name": "member", "expression": "member", "display_name": "Member Name"},
+    {"name": "date", "expression": "date", "display_name": "Date"},
+    {"name": "from_time", "expression": "from_time", "display_name": "Start Time"},
+    {"name": "to_time", "expression": "to_time", "display_name": "End Time"},
+    {"name": "project", "expression": "project", "display_name": "Project Name"}
+  ],
+  "filters": [
+    {"field": "off", "operator": "equals", "value": "false"}
+  ],
+  "sort": [{"field": "date", "order": "ASC"}],
+  "group_by": ["member"]
+}
+
+Example 2 - Sheet per Project (MUST include group_by: ["project"]):
+{
+  "name": "Project Breakdown Report",
+  "description": "Detailed timesheet entries organized by project",
+  "output_structure": "SHEET_PER_PROJECT",
+  "summary_type": "NONE",
+  "fields": [
+    {"name": "project", "expression": "project", "display_name": "Project Name"},
+    {"name": "member", "expression": "member", "display_name": "Member Name"},
+    {"name": "date", "expression": "date", "display_name": "Date"},
+    {"name": "from_time", "expression": "from_time", "display_name": "Start Time"},
+    {"name": "to_time", "expression": "to_time", "display_name": "End Time"}
+  ],
+  "filters": [
+    {"field": "date", "operator": "greater_equal", "value": "2025-10-01"}
+  ],
+  "sort": [{"field": "date", "order": "ASC"}],
+  "group_by": ["project"]
+}
+
+Example 3 - Single Sheet Summary (MUST include group_by: []):
+{
+  "name": "Member Hours Summary",
+  "description": "Total hours per member",
+  "output_structure": "SINGLE_SHEET",
+  "summary_type": "MEMBER_TOTALS", 
+  "fields": [
+    {"name": "member", "expression": "member", "display_name": "Member Name"},
+    {"name": "hours", "expression": "calculateWorkingHours(record.from_time, record.to_time, record.off)", "display_name": "Total Hours"}
+  ],
+  "filters": [
+    {"field": "off", "operator": "equals", "value": "false"}
+  ],
+  "sort": [{"field": "member", "order": "ASC"}],
+  "group_by": []
+}
+
+Example 4 - Time-Off Report (showing filter usage):
+{
+  "name": "Vacation Time Report",
+  "description": "All vacation time entries by member",
+  "output_structure": "SHEET_PER_EMPLOYEE",
+  "summary_type": "NONE",
+  "fields": [
+    {"name": "member", "expression": "member", "display_name": "Member Name"},
+    {"name": "date", "expression": "date", "display_name": "Date"},
+    {"name": "off_type", "expression": "off_type", "display_name": "Time Off Type"}
+  ],
+  "filters": [
+    {"field": "off", "operator": "equals", "value": "true"},
+    {"field": "off_type", "operator": "equals", "value": "Vacation"}
+  ],
+  "sort": [{"field": "date", "order": "ASC"}],
+  "group_by": ["member"]
+}
+
+FILTER EXAMPLES AND GUIDANCE:
+
+Basic Filter Examples:
+- Show only specific project: {"field": "project", "operator": "equals", "value": "ProjectA"}
+- Show multiple members: {"field": "member", "operator": "contains", "value": "John"}
+- Show hours > 8: {"field": "hours", "operator": "greater_than", "value": "8"}
+- Exclude specific task: {"field": "task_type", "operator": "not_equals", "value": "Meeting"}
+- Show recent dates: {"field": "date", "operator": "greater_equal", "value": "2025-10-01"}
+
+Time-Off Filter Examples:
+- Show only time-off entries: {"field": "off", "operator": "equals", "value": "true"}
+- Show only work entries: {"field": "off", "operator": "equals", "value": "false"}
+- Show vacation days: {"field": "off_type", "operator": "equals", "value": "Vacation"}
+- Show sick leave: {"field": "off_type", "operator": "equals", "value": "Sick Leave"}
+
+Available Filter Operators:
+- "equals": Exact match (=)
+- "not_equals": Not equal (!=)
+- "contains": Text contains substring
+- "greater_than": Numeric greater than (>)
+- "less_than": Numeric less than (<)
+- "greater_equal": Numeric greater than or equal (>=)
+- "less_equal": Numeric less than or equal (<=)
+
+Filter Guidelines:
+1. Use appropriate operators for data types (numeric operators for hours, dates)
+2. For time-off reports, filter by "off" field (true/false) and "off_type" field
+3. Date values should be in YYYY-MM-DD format
+4. Multiple filters are combined with AND logic
+5. Use "contains" for partial text matching, "equals" for exact matching
 
 REQUIRED JSON FORMAT:
 {
@@ -310,7 +440,7 @@ REQUIRED JSON FORMAT:
   "filters": [
     {
       "field": "field_name",
-      "operator": "equals|contains|greater_than|less_than",
+      "operator": "equals|contains|greater_than|less_than|greater_equal|less_equal|not_equals",
       "value": "filter_value"
     }
   ],
@@ -321,7 +451,15 @@ REQUIRED JSON FORMAT:
     }
   ],
   "group_by": ["field_name"]
-}`;
+}
+
+FINAL REMINDER - NEVER FORGET THESE REQUIREMENTS:
+1. ALWAYS include the "group_by" field in your JSON response
+2. For SHEET_PER_EMPLOYEE or FILE_PER_EMPLOYEE: group_by MUST be ["member"]
+3. For SHEET_PER_PROJECT or FILE_PER_PROJECT: group_by MUST be ["project"]  
+4. For SINGLE_SHEET: group_by MUST be []
+5. The grouping field MUST be the first field in the fields array
+6. Return ONLY valid JSON, no additional text`;
 
     return {
       success: true,
@@ -1106,8 +1244,8 @@ function convertFieldsToColumnsString(fields) {
 
 /**
  * Convert field names in function parameters to use record. prefix
- * @param {string} expression - Function expression like "calculateHours(from_time, to_time)"
- * @returns {string} Expression with converted field names like "calculateHours(record.from_time, record.to_time)"
+ * @param {string} expression - Function expression like "calculateWorkingHours(from_time, to_time, off)"
+ * @returns {string} Expression with converted field names like "calculateWorkingHours(record.from_time, record.to_time, record.off)"
  */
 function convertFunctionParameterFields(expression) {
   // Use all available field names from AI_FIELD_MAPPING constant
@@ -1150,12 +1288,35 @@ function convertFiltersToString(filters) {
     // Map field names to display names
     const displayName = AI_FIELD_MAPPING[field] || field;
     
-    // For now, only support equals operator in string format
-    if (operator === 'equals') {
-      return `${displayName}=${value}`;
+    // Map AI operators to system operators
+    let systemOperator = '=';
+    switch (operator) {
+      case 'equals':
+        systemOperator = '=';
+        break;
+      case 'not_equals':
+        systemOperator = '!=';
+        break;
+      case 'greater_than':
+        systemOperator = '>';
+        break;
+      case 'less_than':
+        systemOperator = '<';
+        break;
+      case 'greater_equal':
+        systemOperator = '>=';
+        break;
+      case 'less_equal':
+        systemOperator = '<=';
+        break;
+      case 'contains':
+        systemOperator = 'contains';
+        break;
+      default:
+        systemOperator = '=';
     }
     
-    return `${displayName}=${value}`;
+    return `${displayName}${systemOperator}${value}`;
   }).join(',');
 }
 
@@ -1230,14 +1391,14 @@ function storeConfiguration(config) {
     // Try to get existing Report Configs sheet or create new one
     let configSheet = null;
     try {
-      configSheet = spreadsheet.getSheetByName('Report Configs');
+      configSheet = spreadsheet.getSheetByName(REPORT_CONFIG.REPORT_CONFIG_SHEET_NAME);
     } catch (error) {
       // Sheet doesn't exist, create it
-      configSheet = spreadsheet.insertSheet('Report Configs');
+      configSheet = spreadsheet.insertSheet(REPORT_CONFIG.REPORT_CONFIG_SHEET_NAME);
       
       // Add headers for all 10 columns (A through J)
       configSheet.getRange(1, 1, 1, 10).setValues([[
-        'Name', 'Description', 'Columns', 'Filters', 'Sort By', 'Sort Order', 'Summary Type', 'Output Structure', 'Grouping Field', 'Enabled'
+        'Name', 'Description', 'Columns', 'Filters', 'Sort By', 'Sort Order', 'Summary Type', 'Output Structure', 'Grouping Field', 'In-active'
       ]]);
       
       // Format headers
@@ -1259,21 +1420,23 @@ function storeConfiguration(config) {
       config.summaryType || config.summary_type || 'NONE',
       config.outputStructure || config.output_structure || 'SINGLE_SHEET',
       convertGroupingFieldToString(config.group_by, config.output_structure || config.outputStructure),
-      'TRUE'  // Always enable AI-generated reports
+      false  // Always enable AI-generated reports
     ];
     
+    // insert Checkbox for In-active column
+    configSheet.getRange(nextRow, 10).insertCheckboxes();
     // Insert the configuration
     configSheet.getRange(nextRow, 1, 1, 10).setValues([configRow]);
     
     logAIInfo('Configuration stored successfully', { 
-      sheetName: 'Report Configs',
+      sheetName: REPORT_CONFIG.REPORT_CONFIG_SHEET_NAME,
       row: nextRow,
       reportName: config.name
     });
     
     return {
       success: true,
-      sheetName: 'Report Configs',
+      sheetName: REPORT_CONFIG.REPORT_CONFIG_SHEET_NAME,
       row: nextRow,
       configName: config.name || config.reportName
     };
@@ -1300,7 +1463,7 @@ function checkDuplicateReportName(reportName) {
     let configSheet = null;
     
     try {
-      configSheet = spreadsheet.getSheetByName('Report Configs');
+      configSheet = spreadsheet.getSheetByName(REPORT_CONFIG.REPORT_CONFIG_SHEET_NAME);
     } catch (error) {
       // Sheet doesn't exist, no duplicates possible
       return { success: true, isDuplicate: false };
@@ -1387,26 +1550,31 @@ function handleAIServiceFailure(prompt, error) {
   }
 }
 
-// Export functions for testing and main.js usage
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    processNaturalLanguageRequest,
-    buildAIContext,
-    buildAIPrompt,
-    callAIService,
-    callGeminiAPI,
-    callClaudeAPI,
-    parseAIResponse,
-    validateConfiguration,
-    generateCacheKey,
-    getCachedConfiguration,
-    setCachedConfiguration,
-    clearExpiredCache,
-    logAIInfo,
-    checkAICredentials,
-    setupAICredentials,
-    storeConfiguration,
-    checkDuplicateReportName,
-    handleAIServiceFailure
-  };
+/**
+ * Show success dialog after AI report generation
+ * @param {Object} configuration - Generated configuration
+ * @param {Object} metadata - Generation metadata
+ */
+function showAIReportSuccessDialog(configuration, metadata) {
+  try {
+    const ui = SpreadsheetApp.getUi();
+    
+    let message = `Successfully generated report configuration!\n\n`;
+    message += `Report Name: ${configuration.name}\n`;
+    message += `Description: ${configuration.description}\n`;
+    message += `Fields: ${configuration.fields ? configuration.fields.length : 0} columns\n`;
+    message += `Output Structure: ${configuration.output_structure}\n`;
+    
+    if (metadata && metadata.fromCache) {
+      message += `\nSource: Cached result\n`;
+    }
+    
+    message += `\nThe configuration has been saved and is ready to use.`;
+    
+    ui.alert('AI Report Generated', message, ui.ButtonSet.OK);
+    
+  } catch (error) {
+    console.error('Error showing success dialog:', error);
+    // Don't throw error here as the main operation succeeded
+  }
 }

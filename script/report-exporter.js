@@ -128,9 +128,8 @@ function readReportConfigurations() {
         '• Check that all required fields are filled in',
         '• Ensure column names match available options exactly',
         '• Verify that Sort By column exists in your Columns list',
-        '• Use exact values: ASC/DESC for Sort Order, TRUE/FALSE for Enabled',
+        '• Use exact values: ASC/DESC for Sort Order, checkbox for In-active',
         '',
-        'Need examples? Check the setup guidance above.'
       ];
       
       return {
@@ -148,7 +147,7 @@ function readReportConfigurations() {
           'No enabled configurations found.',
           '',
           'SOLUTION:',
-          '• Check that at least one configuration has Enabled = TRUE',
+          '• Check that at least one configuration has In-active unchecked (enabled)',
           '• Verify your configurations pass all validation rules',
           '• Review the setup guidance above for help'
         ]
@@ -313,14 +312,22 @@ function parseConfigurationRow(row, rowNum) {
     config.summaryType = 'NONE'; // Default
   }
   
-  // Enabled validation
-  const enabledText = row[REPORT_CONFIG.CONFIG_COLUMNS.ENABLED] || '';
-  if (enabledText.toString().trim().toUpperCase() === 'TRUE') {
-    config.enabled = true;
-  } else if (enabledText.toString().trim().toUpperCase() === 'FALSE') {
-    config.enabled = false;
+  // In-active validation (checkbox - checked means inactive)
+  const inactiveValue = row[REPORT_CONFIG.CONFIG_COLUMNS.INACTIVE];
+  if (typeof inactiveValue === 'boolean') {
+    config.enabled = !inactiveValue; // If In-active is checked (true), then enabled is false
+  } else if (inactiveValue === null || inactiveValue === undefined || inactiveValue === '') {
+    config.enabled = true; // Default to enabled if not set
   } else {
-    errors.push('Enabled must be TRUE or FALSE');
+    // Handle legacy text values if any still exist
+    const inactiveText = inactiveValue.toString().trim().toUpperCase();
+    if (inactiveText === 'TRUE') {
+      config.enabled = false; // Inactive = true means enabled = false
+    } else if (inactiveText === 'FALSE') {
+      config.enabled = true; // Inactive = false means enabled = true
+    } else {
+      config.enabled = true; // Default to enabled for unknown values
+    }
   }
   
   // Output Structure validation (new feature)
@@ -857,6 +864,33 @@ function applySorting(data, sortBy, sortOrder) {
 }
 
 /**
+ * Identify numeric columns that can be aggregated
+ * @param {Array} data - Data to analyze
+ * @param {Array} columns - Available column names
+ * @returns {Array} Array of numeric column names
+ */
+function identifyNumericColumns(data, columns) {
+  if (!data || data.length === 0 || !columns) {
+    return [];
+  }
+  
+  const numericColumns = [];
+  const sampleRecord = data[0];
+  
+  columns.forEach(function(column) {
+    if (sampleRecord.hasOwnProperty(column)) {
+      const value = sampleRecord[column];
+      // Check if the value is numeric or can be converted to a number
+      if (typeof value === 'number' || (!isNaN(parseFloat(value)) && isFinite(value))) {
+        numericColumns.push(column);
+      }
+    }
+  });
+  
+  return numericColumns;
+}
+
+/**
  * Apply summary/aggregation to the data
  * @param {Array} data - Data to summarize
  * @param {string} summaryType - Type of summary
@@ -864,173 +898,199 @@ function applySorting(data, sortBy, sortOrder) {
  * @returns {Array} Summarized data
  */
 function applySummary(data, summaryType, columns) {
+  // Identify numeric columns for aggregation
+  const numericColumns = identifyNumericColumns(data, columns);
+  
   switch (summaryType.toUpperCase()) {
     case 'MEMBER_TOTALS':
-      return aggregateByMember(data);
+      return aggregateByMember(data, numericColumns);
     case 'DAILY_TOTALS':
-      return aggregateByDay(data);
+      return aggregateByDay(data, numericColumns);
     case 'PROJECT_TOTALS':
-      return aggregateByProject(data);
+      return aggregateByProject(data, numericColumns);
     case 'MEMBER_PROJECT_BREAKDOWN':
-      return aggregateByMemberProject(data);
+      return aggregateByMemberProject(data, numericColumns);
     default:
       return data; // No summary
   }
 }
 
 /**
- * Aggregate data by team member
+ * Aggregate data by team member with flexible numeric column aggregation
  * @param {Array} data - Data to aggregate
+ * @param {Array} numericColumns - Array of numeric column names to aggregate
  * @returns {Array} Aggregated data
  */
-function aggregateByMember(data) {
+function aggregateByMember(data, numericColumns) {
   const memberTotals = {};
+
+  //if numbericColumns is not array
+  if (!Array.isArray(numericColumns)) {
+    numericColumns = [numericColumns];
+  }
   
   data.forEach(function(record) {
     const memberName = record['Member Name'] || record.member || 'Unknown';
     
     if (!memberTotals[memberName]) {
       memberTotals[memberName] = {
-        'Member Name': memberName,
-        'Total Hours': 0,
-        'Total Entries': 0,
-        'Date Range': { start: null, end: null }
+        'Member Name': memberName
       };
+      
+      // Initialize all numeric columns to 0
+      numericColumns.forEach(function(column) {
+        memberTotals[memberName][`Total ${column}`] = 0;
+      });
     }
     
-    // Calculate hours if available
-    const hours = calculateHours(record['Start Time'], record['End Time']);
-    if (hours > 0) {
-      memberTotals[memberName]['Total Hours'] += hours;
-    }
-    
-    memberTotals[memberName]['Total Entries']++;
-    
-    // Track date range
-    const recordDate = record['Date'] || record.date;
-    if (recordDate) {
-      if (!memberTotals[memberName]['Date Range'].start || recordDate < memberTotals[memberName]['Date Range'].start) {
-        memberTotals[memberName]['Date Range'].start = recordDate;
+    // Aggregate all numeric columns
+    numericColumns.forEach(function(column) {
+      const value = parseFloat(record[column]) || 0;
+      if (value > 0) {
+        memberTotals[memberName][`Total ${column}`] += value;
       }
-      if (!memberTotals[memberName]['Date Range'].end || recordDate > memberTotals[memberName]['Date Range'].end) {
-        memberTotals[memberName]['Date Range'].end = recordDate;
-      }
-    }
+    });
   });
   
   // Convert to array and format
   return Object.values(memberTotals).map(function(member) {
-    return {
-      'Member Name': member['Member Name'],
-      'Total Hours': Math.round(member['Total Hours'] * 100) / 100,
-      'Total Entries': member['Total Entries'],
-      'Date Range': member['Date Range'].start && member['Date Range'].end 
-        ? `${member['Date Range'].start} to ${member['Date Range'].end}`
-        : 'N/A'
+    const result = {
+      'Member Name': member['Member Name']
     };
+    
+    // Add aggregated numeric columns with proper rounding
+    numericColumns.forEach(function(column) {
+      result[`Total ${column}`] = Math.round(member[`Total ${column}`] * 100) / 100;
+    });
+    
+    return result;
   });
 }
 
 /**
- * Aggregate data by day
+ * Aggregate data by day with flexible numeric column aggregation
  * @param {Array} data - Data to aggregate
+ * @param {Array} numericColumns - Array of numeric column names to aggregate
  * @returns {Array} Aggregated data
  */
-function aggregateByDay(data) {
+function aggregateByDay(data, numericColumns) {
   const dailyTotals = {};
   
+  //if numbericColumns is not array
+  if (!Array.isArray(numericColumns)) {
+    numericColumns = [numericColumns];
+  }
+
   data.forEach(function(record) {
     const date = record['Date'] || record.date || 'Unknown';
     
     if (!dailyTotals[date]) {
       dailyTotals[date] = {
-        'Date': date,
-        'Total Hours': 0,
-        'Total Entries': 0,
-        'Members': new Set()
+        'Date': date
       };
+      
+      // Initialize all numeric columns to 0
+      numericColumns.forEach(function(column) {
+        dailyTotals[date][`Total ${column}`] = 0;
+      });
     }
     
-    // Calculate hours if available
-    const hours = calculateHours(record['Start Time'], record['End Time']);
-    if (hours > 0) {
-      dailyTotals[date]['Total Hours'] += hours;
-    }
-    
-    dailyTotals[date]['Total Entries']++;
-    
-    const memberName = record['Member Name'] || record.member;
-    if (memberName) {
-      dailyTotals[date]['Members'].add(memberName);
-    }
+    // Aggregate all numeric columns
+    numericColumns.forEach(function(column) {
+      const value = parseFloat(record[column]) || 0;
+      if (value > 0) {
+        dailyTotals[date][`Total ${column}`] += value;
+      }
+    });
   });
   
   // Convert to array and format
   return Object.values(dailyTotals).map(function(day) {
-    return {
-      'Date': day['Date'],
-      'Total Hours': Math.round(day['Total Hours'] * 100) / 100,
-      'Total Entries': day['Total Entries'],
-      'Members Count': day['Members'].size,
-      'Members': Array.from(day['Members']).join(', ')
+    const result = {
+      'Date': day['Date']
     };
+    
+    // Add aggregated numeric columns with proper rounding
+    numericColumns.forEach(function(column) {
+      result[`Total ${column}`] = Math.round(day[`Total ${column}`] * 100) / 100;
+    });
+    
+    return result;
   });
 }
 
 /**
- * Aggregate data by project
+ * Aggregate data by project with flexible numeric column aggregation
  * @param {Array} data - Data to aggregate
+ * @param {Array} numericColumns - Array of numeric column names to aggregate
  * @returns {Array} Aggregated data
  */
-function aggregateByProject(data) {
+function aggregateByProject(data, numericColumns) {
   const projectTotals = {};
+
+  //if numbericColumns is not array
+  if (!Array.isArray(numericColumns)) {
+    numericColumns = [numericColumns];
+  }
   
   data.forEach(function(record) {
     const project = record['Project Name'] || record.project || 'Unknown';
     
+    //if numbericColumns is not array
+    
+
     if (!projectTotals[project]) {
       projectTotals[project] = {
-        'Project Name': project,
-        'Total Hours': 0,
-        'Total Entries': 0,
-        'Members': new Set()
+        'Project Name': project
       };
+   //if numbericColumns is not array
+  if (!Array.isArray(numericColumns)) {
+    numericColumns = [numericColumns];
+  }   
+      // Initialize all numeric columns to 0
+      numericColumns.forEach(function(column) {
+        projectTotals[project][`Total ${column}`] = 0;
+      });
     }
     
-    // Calculate hours if available
-    const hours = calculateHours(record['Start Time'], record['End Time']);
-    if (hours > 0) {
-      projectTotals[project]['Total Hours'] += hours;
-    }
-    
-    projectTotals[project]['Total Entries']++;
-    
-    const memberName = record['Member Name'] || record.member;
-    if (memberName) {
-      projectTotals[project]['Members'].add(memberName);
-    }
+    // Aggregate all numeric columns
+    numericColumns.forEach(function(column) {
+      const value = parseFloat(record[column]) || 0;
+      if (value > 0) {
+        projectTotals[project][`Total ${column}`] += value;
+      }
+    });
   });
   
   // Convert to array and format
   return Object.values(projectTotals).map(function(project) {
-    return {
-      'Project Name': project['Project Name'],
-      'Total Hours': Math.round(project['Total Hours'] * 100) / 100,
-      'Total Entries': project['Total Entries'],
-      'Members Count': project['Members'].size,
-      'Members': Array.from(project['Members']).join(', ')
+    const result = {
+      'Project Name': project['Project Name']
     };
+    
+    // Add aggregated numeric columns with proper rounding
+    numericColumns.forEach(function(column) {
+      result[`Total ${column}`] = Math.round(project[`Total ${column}`] * 100) / 100;
+    });
+    
+    return result;
   });
 }
 
 /**
- * Aggregate data by member and project to show percentage breakdown
+ * Aggregate data by member and project with flexible numeric column aggregation and percentage breakdown
  * @param {Array} data - Data to aggregate
+ * @param {Array} numericColumns - Array of numeric column names to aggregate
  * @returns {Array} Aggregated data with percentage breakdown
  */
-function aggregateByMemberProject(data) {
+function aggregateByMemberProject(data, numericColumns) {
   const memberProjectTotals = {};
   const memberTotals = {};
+
+  //if numbericColumns is not array
+  if (!Array.isArray(numericColumns)) {
+    numericColumns = [numericColumns];
+  }
   
   // First pass: calculate totals per member per project and overall member totals
   data.forEach(function(record) {
@@ -1038,70 +1098,66 @@ function aggregateByMemberProject(data) {
     const project = record['Project Name'] || record.project || 'Unknown';
     const key = `${memberName}|${project}`;
     
-    // Calculate hours if available
-    const hours = calculateHours(record['Start Time'], record['End Time']);
-    
     // Initialize member-project combination
     if (!memberProjectTotals[key]) {
       memberProjectTotals[key] = {
         memberName: memberName,
-        project: project,
-        hours: 0,
-        entries: 0
+        project: project
       };
+      
+      // Initialize all numeric columns
+      numericColumns.forEach(function(column) {
+        memberProjectTotals[key][column] = 0;
+      });
     }
     
-    // Initialize member total
+    // Initialize member totals
     if (!memberTotals[memberName]) {
-      memberTotals[memberName] = 0;
+      memberTotals[memberName] = {};
+      numericColumns.forEach(function(column) {
+        memberTotals[memberName][column] = 0;
+      });
     }
     
-    // Add to totals
-    if (hours > 0) {
-      memberProjectTotals[key].hours += hours;
-      memberTotals[memberName] += hours;
-    }
-    memberProjectTotals[key].entries++;
+    // Aggregate all numeric columns
+    numericColumns.forEach(function(column) {
+      const value = parseFloat(record[column]) || 0;
+      if (value > 0) {
+        memberProjectTotals[key][column] += value;
+        memberTotals[memberName][column] += value;
+      }
+    });
   });
   
   // Second pass: calculate percentages and format output
   return Object.values(memberProjectTotals).map(function(item) {
-    const memberTotal = memberTotals[item.memberName];
-    const percentage = memberTotal > 0 ? Math.round((item.hours / memberTotal) * 100 * 100) / 100 : 0;
-    
-    return {
+    const result = {
       'Member Name': item.memberName,
-      'Project Name': item.project,
-      'Hours': Math.round(item.hours * 100) / 100,
-      'Percentage': `${percentage}%`,
-      'Total Member Hours': Math.round(memberTotal * 100) / 100,
-      'Entries': item.entries
+      'Project Name': item.project
     };
+    
+    // Add individual numeric columns and their percentages
+    numericColumns.forEach(function(column) {
+      const memberTotal = memberTotals[item.memberName][column];
+      const itemValue = item[column];
+      const percentage = memberTotal > 0 ? Math.round((itemValue / memberTotal) * 100 * 100) / 100 : 0;
+      
+      result[column] = Math.round(itemValue * 100) / 100;
+      result[`${column} %`] = `${percentage}%`;
+      result[`Total Member ${column}`] = Math.round(memberTotal * 100) / 100;
+    });
+    
+    return result;
   }).sort(function(a, b) {
-    // Sort by member name first, then by hours descending
+    // Sort by member name first, then by first numeric column descending
     if (a['Member Name'] !== b['Member Name']) {
       return a['Member Name'].localeCompare(b['Member Name']);
     }
-    return b['Hours'] - a['Hours'];
+    if (numericColumns.length > 0) {
+      return b[numericColumns[0]] - a[numericColumns[0]];
+    }
+    return 0;
   });
-}
-
-/**
- * Calculate hours between start and end time
- * @param {string} startTime - Start time string
- * @param {string} endTime - End time string
- * @returns {number} Hours difference
- */
-function calculateHours(startTime, endTime) {
-  if (!startTime || !endTime) return 0;
-  
-  const startMinutes = parseTimeToMinutes(startTime);
-  const endMinutes = parseTimeToMinutes(endTime);
-  
-  if (startMinutes === null || endMinutes === null) return 0;
-  if (endMinutes <= startMinutes) return 0;
-  
-  return (endMinutes - startMinutes) / 60;
 }
 
 /**
@@ -1455,7 +1511,7 @@ function validateConfigurationSheetStructure(sheet) {
     }
     
     // Check for reasonable header names
-    const expectedHeaders = ['Report Name', 'Description', 'Columns', 'Filters', 'Sort By', 'Sort Order', 'Summary Type', 'Enabled'];
+    const expectedHeaders = ['Report Name', 'Description', 'Columns', 'Filters', 'Sort By', 'Sort Order', 'Summary Type', 'Output Structure', 'Grouping Field', 'In-active'];
     const headerWarnings = [];
     
     for (let i = 0; i < Math.min(expectedHeaders.length, headerRow.length); i++) {
@@ -1536,13 +1592,15 @@ function generateSetupAssistanceMessage() {
   message += '   E: Sort By\n';
   message += '   F: Sort Order\n';
   message += '   G: Summary Type\n';
-  message += '   H: Enabled\n\n';
+  message += '   H: Output Structure\n';
+  message += '   I: Grouping Field\n';
+  message += '   J: In-active (checkbox)\n\n';
   
   message += '3. EXAMPLE CONFIGURATIONS:\n\n';
   
   examples.forEach((example, index) => {
     message += `Example ${index + 1}: ${example.name}\n`;
-    message += `${example.reportName} | ${example.description} | ${example.columns} | ${example.filters} | ${example.sortBy} | ${example.sortOrder} | ${example.summaryType} | ${example.enabled}\n\n`;
+    message += `${example.reportName} | ${example.description} | ${example.columns} | ${example.filters} | ${example.sortBy} | ${example.sortOrder} | ${example.summaryType} | ${example.outputStructure || 'SINGLE_SHEET'} | ${example.groupingField || ''} | ${example.inactive === false ? 'unchecked' : 'checked'}\n\n`;
   });
   
   message += '4. AVAILABLE COLUMNS:\n';
@@ -1714,15 +1772,21 @@ function evaluateExpression(expression, context) {
     const safeContext = {
       record: context.record || {},
       // Add transformation functions from constants
-      calculateHours: EXPRESSION_FUNCTIONS.calculateHours,
+      calculateWorkingHours: EXPRESSION_FUNCTIONS.calculateWorkingHours,
+      calculateCustomerHours: EXPRESSION_FUNCTIONS.calculateCustomerHours,
+      calculateOffHours: EXPRESSION_FUNCTIONS.calculateOffHours,
+      calculateUnpaidOffHours: EXPRESSION_FUNCTIONS.calculateUnpaidOffHours,
       formatDate: EXPRESSION_FUNCTIONS.formatDate,
       formatTime: EXPRESSION_FUNCTIONS.formatTime,
       getDayOfWeek: EXPRESSION_FUNCTIONS.getDayOfWeek,
+      getWeekNumber: EXPRESSION_FUNCTIONS.getWeekNumber,
       getMonthName: EXPRESSION_FUNCTIONS.getMonthName,
       addDays: EXPRESSION_FUNCTIONS.addDays,
       stringContains: EXPRESSION_FUNCTIONS.stringContains,
       defaultValue: EXPRESSION_FUNCTIONS.defaultValue,
-      // Helper variables for convenience
+      concat: EXPRESSION_FUNCTIONS.concat,
+      upper: EXPRESSION_FUNCTIONS.upper,
+      lower: EXPRESSION_FUNCTIONS.lower,
       Math: Math,
       Date: Date,
       String: String,
@@ -1812,14 +1876,21 @@ function validateTransformationExpression(expression) {
       // Create a dummy context for validation
       const validationContext = {
         record: {},
-        calculateHours: function() { return 0; },
+        calculateWorkingHours: function() { return 0; },
+        calculateCustomerHours: function() { return 0; },
+        calculateOffHours: function() { return 0; },
+        calculateUnpaidOffHours: function() { return 0; },
         formatDate: function() { return ''; },
         formatTime: function() { return ''; },
         getDayOfWeek: function() { return ''; },
+        getWeekNumber: function() { return 0; },
         getMonthName: function() { return ''; },
         addDays: function() { return new Date(); },
         stringContains: function() { return false; },
         defaultValue: function() { return ''; },
+        concat: function() { return ''; },
+        upper: function() { return ''; },
+        lower: function() { return ''; },
         Math: Math,
         Date: Date,
         String: String,
@@ -2321,7 +2392,7 @@ function createConfigurationExamples() {
       sortBy: "Member Name",
       sortOrder: "ASC",
       summaryType: "NONE",
-      enabled: "TRUE",
+      inactive: false,
       outputStructure: "SINGLE_SHEET",
       groupingField: ""
     },
@@ -2329,12 +2400,12 @@ function createConfigurationExamples() {
       name: "Enhanced Project Hours Report",
       reportName: "Project Hours Enhanced",
       description: "Hours by project with calculated totals and expressions",
-      columns: "Project Name,Member Name,Hours Worked:calculateHours(Time In,Time Out),Formatted Date:formatDate(Date)",
+      columns: "Project Name,Member Name,Hours Worked:calculateWorkingHours(Time In,Time Out,Time Off Flag),Formatted Date:formatDate(Date)",
       filters: "Hours>0",
       sortBy: "Project Name",
       sortOrder: "ASC",
       summaryType: "PROJECT_TOTALS",
-      enabled: "TRUE",
+      inactive: false,
       outputStructure: "SHEET_PER_PROJECT",
       groupingField: "Project Name"
     },
@@ -2342,12 +2413,12 @@ function createConfigurationExamples() {
       name: "Multi-File Employee Report",
       reportName: "Employee Report",
       description: "Separate files for each employee with custom calculations",
-      columns: "Member Name,Date,Day of Week:getDayOfWeek(Date),Hours:calculateHours(Time In,Time Out)",
+      columns: "Member Name,Date,Day of Week:getDayOfWeek(Date),Hours:calculateWorkingHours(Time In,Time Out,Time Off Flag)",
       filters: "",
       sortBy: "Date",
       sortOrder: "DESC",
       summaryType: "NONE",
-      enabled: "TRUE",
+      inactive: false,
       outputStructure: "FILE_PER_EMPLOYEE", 
       groupingField: "Member Name"
     },
@@ -2360,8 +2431,70 @@ function createConfigurationExamples() {
       sortBy: "Date",
       sortOrder: "DESC",
       summaryType: "DAILY_TOTALS",
-      enabled: "TRUE"
+      inactive: false
       // Note: outputStructure and groupingField will be auto-added during migration
     }
   ];
+}
+
+/**
+ * UI function to select a report configuration from available options
+ * @param {Array} configurations - Array of available configurations
+ * @returns {Object|null} Selected configuration object or null if cancelled
+ */
+function selectReportConfigurationUI(configurations) {
+  try {
+    if (!configurations || configurations.length === 0) {
+      return null;
+    }
+    
+    // If only one configuration, use it directly
+    if (configurations.length === 1) {
+      const config = configurations[0];
+      const ui = SpreadsheetApp.getUi();
+      const response = ui.alert(
+        'Confirm Configuration',
+        `Use report configuration "${config.reportName}"?\n\nDescription: ${config.description}\nColumns: ${config.columns.join(', ')}`,
+        SpreadsheetApp.getUi().ButtonSet.YES_NO
+      );
+      
+      return response === ui.Button.YES ? config : null;
+    }
+    
+    // Multiple configurations - show selection dialog
+    const ui = SpreadsheetApp.getUi();
+    
+    // Build configuration list for display
+    const configOptions = [];
+    for (let i = 0; i < configurations.length; i++) {
+      const config = configurations[i];
+      configOptions.push(`${i + 1}. ${config.reportName} - ${config.description}`);
+    }
+    
+    const prompt = 'Select a report configuration:\n\n' + configOptions.join('\n') + '\n\nEnter the number (1-' + configurations.length + '):';
+    
+    const response = ui.prompt('Select Report Configuration', prompt, ui.ButtonSet.OK_CANCEL);
+    
+    if (response.getSelectedButton() !== ui.Button.OK) {
+      return null; // User cancelled
+    }
+    
+    const selectedIndex = parseInt(response.getResponseText());
+    
+    if (isNaN(selectedIndex) || selectedIndex < 1 || selectedIndex > configurations.length) {
+      ui.alert('Invalid Selection', 'Please enter a valid number between 1 and ' + configurations.length, ui.ButtonSet.OK);
+      return selectReportConfigurationUI(configurations); // Recursive retry
+    }
+    
+    return configurations[selectedIndex - 1];
+    
+  } catch (error) {
+    Logger.log('Error in selectReportConfigurationUI: ' + error.message);
+    SpreadsheetApp.getUi().alert(
+      'Selection Error',
+      `Error selecting configuration: ${error.message}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return null;
+  }
 }

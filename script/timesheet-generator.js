@@ -31,10 +31,19 @@ function createTimesheetFolder(time) {
 function createTimesheetFile(folder, member, time) {
   //copy from template file
   const fileName = `Timesheet_${time}_${member[MEMBER_COLUMNS.NAME]}`;
-  //check if file was existed
+  //check if file was existed in the folder
+  const files = folder.getFilesByName(fileName);
+  if (files.hasNext()) {
+    return; //file already exists
+  }
   
   const templateFile = DriveApp.getFileById(TEMPLATE_FILE_ID);
   const newFile = templateFile.makeCopy(fileName, folder);
   //move new file to folder
   newFile.moveTo(folder);
+  //generate edit permission for member email
+  if (member[MEMBER_COLUMNS.EMAIL]) {
+    //add member as editor
+    newFile.addEditor(member[MEMBER_COLUMNS.EMAIL]);
+  }
 }

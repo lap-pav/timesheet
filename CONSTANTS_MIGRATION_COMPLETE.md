@@ -55,7 +55,6 @@ In Google Apps Script, all these constants are now available in any file:
 
 - `AI_CONFIG.PRIMARY_SERVICE`
 - `AI_ENDPOINTS.GEMINI` 
-- `AI_REPORT_CONFIG.SHEET_NAME`
 - `AI_FIELD_MAPPING`
 - `AI_EXPRESSION_FUNCTIONS`
 

@@ -749,3 +749,34 @@ const SheetsAPIIntegration = {
     return result;
   }
 };
+
+
+// ============================================================================
+// SHARED UTILITY FUNCTIONS
+// ============================================================================
+
+/**
+ * Read the time period (YYYY-MM format) from the main sheet
+ * @returns {string} Time period in YYYY-MM format
+ */
+function readTime() {
+  const mainSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(MAIN_SHEET_NAME);
+  const year = mainSheet.getRange("B1").getValue();
+  const month = mainSheet.getRange("B2").getValue();
+  const paddedMonth = month.toString().padStart(2, '0');
+  return `${year}-${paddedMonth}`;
+}
+
+/**
+ * Read active members from the Members sheet
+ * @returns {Array} Array of member data arrays
+ */
+function readMembers() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(MEMBER_SHEET_NAME);
+  var data = sheet.getDataRange().getValues();
+  // filter data with In-active = false, find column index of In-active
+  data.shift(); // remove header row
+  data = data.filter(function(row) { return !row[MEMBER_COLUMNS.IN_ACTIVE]; });
+
+  return data;
+}
