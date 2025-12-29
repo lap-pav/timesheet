@@ -333,34 +333,18 @@ function validateTimesheetEntry(entry, memberName, rowIndex) {
   };
   
   try {
-    // Check for empty entry
+    // Check for empty entry - if so, silently skip (members can add empty rows for separation)
     if (!entry || entry.length === 0) {
       result.isValid = false;
-      result.errors.push({
-        type: ERROR_TYPES.INVALID_ENTRY,
-        source: 'ENTRY_VALIDATION',
-        message: `Empty row found at index ${rowIndex}`,
-        severity: SEVERITY_LEVELS.WARNING,
-        timestamp: new Date().toISOString(),
-        memberName: memberName,
-        rowIndex: rowIndex
-      });
+      // Don't log an error for empty rows - they're allowed for visual separation
       return result;
     }
     
-    // Check if all cells are empty
+    // Check if all cells are empty - if so, silently skip (members can add empty rows for separation)
     const hasData = entry.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '');
     if (!hasData) {
       result.isValid = false;
-      result.errors.push({
-        type: ERROR_TYPES.INVALID_ENTRY,
-        source: 'ENTRY_VALIDATION',
-        message: `All cells empty in row ${rowIndex}`,
-        severity: SEVERITY_LEVELS.WARNING,
-        timestamp: new Date().toISOString(),
-        memberName: memberName,
-        rowIndex: rowIndex
-      });
+      // Don't log an error for empty rows - they're allowed for visual separation
       return result;
     }
     
@@ -381,17 +365,9 @@ function validateTimesheetEntry(entry, memberName, rowIndex) {
     const hasMeaningfulData = hasRegularData || isOffDay;
     
     if (!hasMeaningfulData) {
-      // This is effectively an empty row, skip validation
+      // This is effectively an empty row, silently skip (members can add empty rows for separation)
       result.isValid = false;
-      result.errors.push({
-        type: ERROR_TYPES.INVALID_ENTRY,
-        source: 'ENTRY_VALIDATION',
-        message: `No meaningful data in row ${rowIndex}`,
-        severity: SEVERITY_LEVELS.WARNING,
-        timestamp: new Date().toISOString(),
-        memberName: memberName,
-        rowIndex: rowIndex
-      });
+      // Don't log an error for rows with no meaningful data - they're allowed for visual separation
       return result;
     }
     

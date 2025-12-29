@@ -499,7 +499,7 @@ function generateConfigurableReport(aggregatedData, configuration) {
     // Step 4: Apply aggregation/summary
     if (configuration.summaryType && configuration.summaryType !== 'NONE') {
       const summaryStartTime = Date.now();
-      processedData = applySummary(processedData, configuration.summaryType, configuration.columns);
+      processedData = applySummary(processedData, configuration.summaryType, configuration.columns, configuration);
       processingSteps.push({
         step: 'summarization',
         timeMs: Date.now() - summaryStartTime,
@@ -891,27 +891,97 @@ function identifyNumericColumns(data, columns) {
 }
 
 /**
+ * Analyze column definitions to detect aggregation-capable fields
+ * @param {Array} columnDefinitions - Array of column definition objects
+ * @returns {Object} Detected field mappings for aggregation
+ */
+function detectAggregationFields(columnDefinitions) {
+  const detectedFields = {
+    member: null,
+    project: null, 
+    date: null,
+    hours: []
+  };
+  
+  columnDefinitions.forEach(function(colDef) {
+    const expression = colDef.expression.toLowerCase();
+    
+    // Member field detection - look for record.member references
+    if (!detectedFields.member && expression.includes('record.member')) {
+      detectedFields.member = colDef.displayName;
+    }
+    
+    // Project field detection - look for record.project references  
+    if (!detectedFields.project && expression.includes('record.project')) {
+      detectedFields.project = colDef.displayName;
+    }
+    
+    // Date field detection - look for record.date or date functions
+    if (!detectedFields.date && (
+      expression.includes('record.date') || 
+      expression.includes('formatdate') ||
+      expression.includes('formatjapanesedate')
+    )) {
+      detectedFields.date = colDef.displayName;
+    }
+    
+    // Hours field detection - look for time calculation functions
+    if (expression.includes('calculateworkinghours') ||
+        expression.includes('calculatecustomerhours') ||
+        expression.includes('calculateoffhours') ||
+        expression.includes('formatworkhours')) {
+      detectedFields.hours.push(colDef.displayName);
+    }
+  });
+  
+  return detectedFields;
+}
+
+/**
  * Apply summary/aggregation to the data
  * @param {Array} data - Data to summarize
  * @param {string} summaryType - Type of summary
  * @param {Array} columns - Available columns
+ * @param {Object} config - Enhanced configuration with columnDefinitions
  * @returns {Array} Summarized data
  */
-function applySummary(data, summaryType, columns) {
-  // Identify numeric columns for aggregation
-  const numericColumns = identifyNumericColumns(data, columns);
+function applySummary(data, summaryType, columns, config) {
+  let aggregationFields = {};
+  let numericColumns = [];
+  
+  // Enhanced field detection if columnDefinitions are available
+  if (config && config.columnDefinitions) {
+    aggregationFields = detectAggregationFields(config.columnDefinitions);
+    
+    // Use detected numeric columns (hours fields)
+    numericColumns = aggregationFields.hours.length > 0 ? aggregationFields.hours : [];
+    
+    // Fallback: if no hours fields detected, use legacy numeric detection
+    if (numericColumns.length === 0) {
+      numericColumns = identifyNumericColumns(data, config.columnDefinitions.map(def => def.displayName));
+    }
+  } else {
+    // Legacy fallback
+    numericColumns = identifyNumericColumns(data, columns);
+  }
+  
+  // Pass aggregation field information to summary functions
+  const summaryConfig = {
+    aggregationFields: aggregationFields,
+    columnDefinitions: config ? config.columnDefinitions : null
+  };
   
   switch (summaryType.toUpperCase()) {
     case 'MEMBER_TOTALS':
-      return aggregateByMember(data, numericColumns);
+      return aggregateByMember(data, numericColumns, summaryConfig);
     case 'DAILY_TOTALS':
-      return aggregateByDay(data, numericColumns);
+      return aggregateByDay(data, numericColumns, summaryConfig);
     case 'PROJECT_TOTALS':
-      return aggregateByProject(data, numericColumns);
+      return aggregateByProject(data, numericColumns, summaryConfig);
     case 'MEMBER_PROJECT_BREAKDOWN':
-      return aggregateByMemberProject(data, numericColumns);
+      return aggregateByMemberProject(data, numericColumns, summaryConfig);
     default:
-      return data; // No summary
+      return data;
   }
 }
 
@@ -919,9 +989,17 @@ function applySummary(data, summaryType, columns) {
  * Aggregate data by team member with flexible numeric column aggregation
  * @param {Array} data - Data to aggregate
  * @param {Array} numericColumns - Array of numeric column names to aggregate
+ * @param {Object} config - Configuration with detected aggregation fields
  * @returns {Array} Aggregated data
  */
-function aggregateByMember(data, numericColumns) {
+function aggregateByMember(data, numericColumns, config) {
+  // Determine member field from tracked columns
+  let memberField = 'Member Name'; // default fallback
+  
+  if (config && config.aggregationFields && config.aggregationFields.member) {
+    memberField = config.aggregationFields.member;
+  }
+  
   const memberTotals = {};
 
   //if numbericColumns is not array
@@ -930,12 +1008,11 @@ function aggregateByMember(data, numericColumns) {
   }
   
   data.forEach(function(record) {
-    const memberName = record['Member Name'] || record.member || 'Unknown';
+    const memberName = record[memberField] || record.member || 'Unknown';
     
     if (!memberTotals[memberName]) {
-      memberTotals[memberName] = {
-        'Member Name': memberName
-      };
+      memberTotals[memberName] = {};
+      memberTotals[memberName][memberField] = memberName;
       
       // Initialize all numeric columns to 0
       numericColumns.forEach(function(column) {
@@ -954,9 +1031,8 @@ function aggregateByMember(data, numericColumns) {
   
   // Convert to array and format
   return Object.values(memberTotals).map(function(member) {
-    const result = {
-      'Member Name': member['Member Name']
-    };
+    const result = {};
+    result[memberField] = member[memberField];
     
     // Add aggregated numeric columns with proper rounding
     numericColumns.forEach(function(column) {
@@ -971,9 +1047,17 @@ function aggregateByMember(data, numericColumns) {
  * Aggregate data by day with flexible numeric column aggregation
  * @param {Array} data - Data to aggregate
  * @param {Array} numericColumns - Array of numeric column names to aggregate
+ * @param {Object} config - Configuration with detected aggregation fields
  * @returns {Array} Aggregated data
  */
-function aggregateByDay(data, numericColumns) {
+function aggregateByDay(data, numericColumns, config) {
+  // Determine date field from tracked columns
+  let dateField = 'Date'; // default fallback
+  
+  if (config && config.aggregationFields && config.aggregationFields.date) {
+    dateField = config.aggregationFields.date;
+  }
+  
   const dailyTotals = {};
   
   //if numbericColumns is not array
@@ -982,12 +1066,11 @@ function aggregateByDay(data, numericColumns) {
   }
 
   data.forEach(function(record) {
-    const date = record['Date'] || record.date || 'Unknown';
+    const date = record[dateField] || record.date || 'Unknown';
     
     if (!dailyTotals[date]) {
-      dailyTotals[date] = {
-        'Date': date
-      };
+      dailyTotals[date] = {};
+      dailyTotals[date][dateField] = date;
       
       // Initialize all numeric columns to 0
       numericColumns.forEach(function(column) {
@@ -1006,9 +1089,8 @@ function aggregateByDay(data, numericColumns) {
   
   // Convert to array and format
   return Object.values(dailyTotals).map(function(day) {
-    const result = {
-      'Date': day['Date']
-    };
+    const result = {};
+    result[dateField] = day[dateField];
     
     // Add aggregated numeric columns with proper rounding
     numericColumns.forEach(function(column) {
@@ -1023,9 +1105,17 @@ function aggregateByDay(data, numericColumns) {
  * Aggregate data by project with flexible numeric column aggregation
  * @param {Array} data - Data to aggregate
  * @param {Array} numericColumns - Array of numeric column names to aggregate
+ * @param {Object} config - Configuration with detected aggregation fields
  * @returns {Array} Aggregated data
  */
-function aggregateByProject(data, numericColumns) {
+function aggregateByProject(data, numericColumns, config) {
+  // Determine project field from tracked columns
+  let projectField = 'Project Name'; // default fallback
+  
+  if (config && config.aggregationFields && config.aggregationFields.project) {
+    projectField = config.aggregationFields.project;
+  }
+  
   const projectTotals = {};
 
   //if numbericColumns is not array
@@ -1034,15 +1124,14 @@ function aggregateByProject(data, numericColumns) {
   }
   
   data.forEach(function(record) {
-    const project = record['Project Name'] || record.project || 'Unknown';
+    const project = record[projectField] || record.project || 'Unknown';
     
     //if numbericColumns is not array
     
 
     if (!projectTotals[project]) {
-      projectTotals[project] = {
-        'Project Name': project
-      };
+      projectTotals[project] = {};
+      projectTotals[project][projectField] = project;
    //if numbericColumns is not array
   if (!Array.isArray(numericColumns)) {
     numericColumns = [numericColumns];
@@ -1064,9 +1153,8 @@ function aggregateByProject(data, numericColumns) {
   
   // Convert to array and format
   return Object.values(projectTotals).map(function(project) {
-    const result = {
-      'Project Name': project['Project Name']
-    };
+    const result = {};
+    result[projectField] = project[projectField];
     
     // Add aggregated numeric columns with proper rounding
     numericColumns.forEach(function(column) {
@@ -1081,83 +1169,220 @@ function aggregateByProject(data, numericColumns) {
  * Aggregate data by member and project with flexible numeric column aggregation and percentage breakdown
  * @param {Array} data - Data to aggregate
  * @param {Array} numericColumns - Array of numeric column names to aggregate
+ * @param {Object} config - Configuration with detected aggregation fields
  * @returns {Array} Aggregated data with percentage breakdown
  */
-function aggregateByMemberProject(data, numericColumns) {
-  const memberProjectTotals = {};
-  const memberTotals = {};
+function aggregateByMemberProject(data, numericColumns, config) {
+  // Determine member and project fields from tracked columns
+  let memberField = 'Member Name'; // default fallback
+  let projectField = 'Project Name'; // default fallback
+  
+  if (config && config.aggregationFields) {
+    if (config.aggregationFields.member) {
+      memberField = config.aggregationFields.member;
+    }
+    if (config.aggregationFields.project) {
+      projectField = config.aggregationFields.project;
+    }
+  }
 
-  //if numbericColumns is not array
+  // Ensure numericColumns is an array
   if (!Array.isArray(numericColumns)) {
     numericColumns = [numericColumns];
   }
   
-  // First pass: calculate totals per member per project and overall member totals
+  // Single pass aggregation with direct grouping
+  const memberData = {}; // { memberName: { projects: [], totals: {}, totalPercentage: 0 } }
+  
   data.forEach(function(record) {
-    const memberName = record['Member Name'] || record.member || 'Unknown';
-    const project = record['Project Name'] || record.project || 'Unknown';
-    const key = `${memberName}|${project}`;
+    const memberName = record[memberField] || record.member;
+    const project = record[projectField] || record.project;
     
-    // Initialize member-project combination
-    if (!memberProjectTotals[key]) {
-      memberProjectTotals[key] = {
-        memberName: memberName,
-        project: project
+    // Skip records with missing member or project
+    if (!memberName || !project) {
+      return;
+    }
+    
+    // Initialize member data structure if not exists
+    if (!memberData[memberName]) {
+      memberData[memberName] = {
+        projects: {},
+        totals: {}
       };
       
-      // Initialize all numeric columns
+      // Initialize member totals
       numericColumns.forEach(function(column) {
-        memberProjectTotals[key][column] = 0;
+        memberData[memberName].totals[column] = 0;
       });
     }
     
-    // Initialize member totals
-    if (!memberTotals[memberName]) {
-      memberTotals[memberName] = {};
+    const memberInfo = memberData[memberName];
+    
+    // Initialize project data if not exists
+    if (!memberInfo.projects[project]) {
+      memberInfo.projects[project] = {};
       numericColumns.forEach(function(column) {
-        memberTotals[memberName][column] = 0;
+        memberInfo.projects[project][column] = 0;
       });
     }
     
-    // Aggregate all numeric columns
+    // Aggregate numeric values
     numericColumns.forEach(function(column) {
       const value = parseFloat(record[column]) || 0;
       if (value > 0) {
-        memberProjectTotals[key][column] += value;
-        memberTotals[memberName][column] += value;
+        memberInfo.projects[project][column] += value;
+        memberInfo.totals[column] += value;
       }
     });
   });
   
-  // Second pass: calculate percentages and format output
-  return Object.values(memberProjectTotals).map(function(item) {
-    const result = {
-      'Member Name': item.memberName,
-      'Project Name': item.project
-    };
+  // Process each member's data in one optimized pass
+  const finalResults = [];
+  
+  Object.keys(memberData).sort().forEach(function(memberName) {
+    const memberInfo = memberData[memberName];
+    const projectEntries = Object.keys(memberInfo.projects);
     
-    // Add individual numeric columns and their percentages
-    numericColumns.forEach(function(column) {
-      const memberTotal = memberTotals[item.memberName][column];
-      const itemValue = item[column];
-      const percentage = memberTotal > 0 ? Math.round((itemValue / memberTotal) * 100 * 100) / 100 : 0;
+    // Helper function to check if a project name matches Common Dragon aliases
+    function isCommonDragonProject(projectName) {
+      if (!projectName) return false;
+      const projectLower = projectName.toLowerCase().trim();
+      return projectLower === 'common dragon' || 
+             projectLower === 'cd' || 
+             projectLower === 'commonD' || 
+             projectLower === 'commondragon';
+    }
+    
+    // Helper function to check if a project name is BO
+    function isBOProject(projectName) {
+      if (!projectName) return false;
+      const projectLower = projectName.toLowerCase().trim();
+      return projectLower === 'bo';
+    }
+    
+    // Create result objects with percentages calculated once
+    const memberRows = projectEntries.map(function(project) {
+      const projectData = memberInfo.projects[project];
+      const result = {};
       
-      result[column] = Math.round(itemValue * 100) / 100;
-      result[`${column} %`] = `${percentage}%`;
-      result[`Total Member ${column}`] = Math.round(memberTotal * 100) / 100;
+      // Set basic fields
+      result[memberField] = memberName;
+      result[projectField] = project;
+      
+      // Calculate and set numeric values and percentages
+      numericColumns.forEach(function(column) {
+        const itemValue = projectData[column];
+        const memberTotal = memberInfo.totals[column];
+        const percentage = memberTotal > 0 ? (itemValue / memberTotal) * 100 : 0;
+        
+        result[column] = itemValue;
+        result[`${column} %`] = percentage; // Keep as number for now
+      });
+      
+      return result;
     });
     
-    return result;
-  }).sort(function(a, b) {
-    // Sort by member name first, then by first numeric column descending
-    if (a['Member Name'] !== b['Member Name']) {
-      return a['Member Name'].localeCompare(b['Member Name']);
+    // Calculate Common Dragon percentages for redistribution
+    const commonDragonPercentages = {};
+    let hasCommonDragon = false;
+    let hasBOProject = false;
+    
+    numericColumns.forEach(function(column) {
+      commonDragonPercentages[column] = 0;
+      memberRows.forEach(function(row) {
+        if (isCommonDragonProject(row[projectField])) {
+          commonDragonPercentages[column] = row[`${column} %`];
+          hasCommonDragon = true;
+        }
+        if (isBOProject(row[projectField])) {
+          hasBOProject = true;
+        }
+      });
+    });
+    
+    // If member has Common Dragon but no BO project, create a BO row
+    if (hasCommonDragon && !hasBOProject) {
+      const boRow = {};
+      boRow[memberField] = memberName;
+      boRow[projectField] = 'BO';
+      
+      // Initialize BO row with 0 values and 0% for original columns
+      numericColumns.forEach(function(column) {
+        boRow[column] = 0;
+        boRow[`${column} %`] = 0;
+      });
+      
+      memberRows.push(boRow);
     }
+    
+    // Add the new "column % (Common Dragon is BO)" columns
+    memberRows.forEach(function(row) {
+      numericColumns.forEach(function(column) {
+        if (isCommonDragonProject(row[projectField])) {
+          // Set Common Dragon percentage to empty in new column
+          row[`${column} % (Common Dragon is BO)`] = '';
+        } else if (isBOProject(row[projectField])) {
+          // Add Common Dragon percentage to BO project
+          const originalPercentage = row[`${column} %`];
+          const newPercentage = originalPercentage + commonDragonPercentages[column];
+          row[`${column} % (Common Dragon is BO)`] = newPercentage;
+        } else {
+          // Keep original percentage for other projects
+          row[`${column} % (Common Dragon is BO)`] = row[`${column} %`];
+        }
+      });
+    });
+    
+    // Sort projects by first numeric column descending
     if (numericColumns.length > 0) {
-      return b[numericColumns[0]] - a[numericColumns[0]];
+      memberRows.sort(function(a, b) {
+        return b[numericColumns[0]] - a[numericColumns[0]];
+      });
     }
-    return 0;
+    
+    // Calculate total percentage once for the member
+    let totalPercentage = 0;
+    memberRows.forEach(function(row) {
+      numericColumns.forEach(function(column) {
+        totalPercentage += row[`${column} %`];
+      });
+    });
+    
+    // Format and add rows to final results
+    memberRows.forEach(function(row, index) {
+      const isLastRow = (index === memberRows.length - 1);
+      
+      // Initialize total columns
+      numericColumns.forEach(function(column) {
+        if (isLastRow) {
+          row[`Total Member ${column}`] =memberInfo.totals[column];
+        } else {
+          row[`Total Member ${column}`] = '';
+        }
+      });
+      
+      // Add Total % column
+      if (isLastRow) {
+        row['Total %'] = `${totalPercentage}%`;
+      } else {
+        row['Total %'] = '';
+      }
+      
+      // Format percentages as strings (done once per row)
+      numericColumns.forEach(function(column) {
+        row[`${column} %`] = `${row[`${column} %`]}%`;
+        
+        // Format the new "Common Dragon is BO" percentage column
+        if (row[`${column} % (Common Dragon is BO)`] !== '') {
+          row[`${column} % (Common Dragon is BO)`] = `${row[`${column} % (Common Dragon is BO)`]}%`;
+        }
+      });
+      
+      finalResults.push(row);
+    });
   });
+
+  return finalResults;
 }
 
 /**
@@ -1168,6 +1393,23 @@ function aggregateByMemberProject(data, numericColumns) {
  * @param {Object} outputStructure - Output structure configuration (optional)
  * @returns {Object} Export result
  */
+/**
+ * Collect all unique column names from all records in the dataset
+ * This ensures dynamic columns (like totals) are included in export
+ */
+function collectAllColumnNames(reportData) {
+  const allColumns = new Set();
+  
+  // Collect all unique column names from all records
+  reportData.forEach(function(record) {
+    Object.keys(record).forEach(function(key) {
+      allColumns.add(key);
+    });
+  });
+  
+  return Array.from(allColumns);
+}
+
 function exportReportToGoogleSheets(reportData, metadata, outputLocation, outputStructure) {
   try {
     Logger.log(`Starting export to Google Sheets: ${metadata.reportName}`);
@@ -1206,8 +1448,8 @@ function exportReportToGoogleSheets(reportData, metadata, outputLocation, output
       Logger.log(`Warning: Could not organize file into folder: ${error.message}`);
     }
     
-    // Set up headers
-    const headers = Object.keys(reportData[0]);
+    // Set up headers - collect ALL column names from all records
+    const headers = collectAllColumnNames(reportData);
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     
     // Format headers
@@ -1776,6 +2018,9 @@ function evaluateExpression(expression, context) {
       calculateCustomerHours: EXPRESSION_FUNCTIONS.calculateCustomerHours,
       calculateOffHours: EXPRESSION_FUNCTIONS.calculateOffHours,
       calculateUnpaidOffHours: EXPRESSION_FUNCTIONS.calculateUnpaidOffHours,
+      formatJapaneseDate: EXPRESSION_FUNCTIONS.formatJapaneseDate,
+      formatJapaneseDayOfWeek: EXPRESSION_FUNCTIONS.formatJapaneseDayOfWeek,
+      formatWorkHours: EXPRESSION_FUNCTIONS.formatWorkHours,
       formatDate: EXPRESSION_FUNCTIONS.formatDate,
       formatTime: EXPRESSION_FUNCTIONS.formatTime,
       getDayOfWeek: EXPRESSION_FUNCTIONS.getDayOfWeek,
@@ -1880,6 +2125,9 @@ function validateTransformationExpression(expression) {
         calculateCustomerHours: function() { return 0; },
         calculateOffHours: function() { return 0; },
         calculateUnpaidOffHours: function() { return 0; },
+        formatJapaneseDate: function() { return ''; },
+        formatJapaneseDayOfWeek: function() { return ''; },
+        formatWorkHours: function() { return ''; },
         formatDate: function() { return ''; },
         formatTime: function() { return ''; },
         getDayOfWeek: function() { return ''; },
@@ -2032,7 +2280,7 @@ function createOutputFiles(data, structurePlan, reportConfig) {
       
       // Write data to sheet
       if (data.length > 0) {
-        const headers = Object.keys(data[0]);
+        const headers = collectAllColumnNames(data);
         const values = [headers].concat(data.map(record => headers.map(header => record[header] || '')));
         sheet.getRange(1, 1, values.length, headers.length).setValues(values);
         
@@ -2072,7 +2320,7 @@ function createOutputFiles(data, structurePlan, reportConfig) {
         
         // Write group data to sheet
         if (groupData.length > 0) {
-          const headers = Object.keys(groupData[0]);
+          const headers = collectAllColumnNames(groupData);
           const values = [headers].concat(groupData.map(record => headers.map(header => record[header] || '')));
           sheet.getRange(1, 1, values.length, headers.length).setValues(values);
           
@@ -2125,7 +2373,7 @@ function createOutputFiles(data, structurePlan, reportConfig) {
         
         // Write group data to sheet
         if (groupData.length > 0) {
-          const headers = Object.keys(groupData[0]);
+          const headers = collectAllColumnNames(groupData);
           const values = [headers].concat(groupData.map(record => headers.map(header => record[header] || '')));
           sheet.getRange(1, 1, values.length, headers.length).setValues(values);
           

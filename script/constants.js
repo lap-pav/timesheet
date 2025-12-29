@@ -462,12 +462,20 @@ const EXPRESSION_FUNCTIONS = {
   },
   
   // Customer time tracking functions
-  calculateCustomerHours: function(tcStartTime, tcEndTime) {
-    if (!tcStartTime || !tcEndTime) return 0;
-    const startMinutes = parseTimeToMinutes(tcStartTime);
-    const endMinutes = parseTimeToMinutes(tcEndTime);
-    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return 0;
-    return Math.round((endMinutes - startMinutes) / 60 * 100) / 100;
+  calculateCustomerHours: function(tcStartTime, tcEndTime, fallbackFromTime, fallbackToTime, isOff) {
+    // Use TC times if provided, otherwise fall back to regular from/to times
+    let startTime = tcStartTime;
+    let endTime = tcEndTime;
+    
+    // Check if TC times are missing or empty, use fallbacks
+    if (!tcStartTime || String(tcStartTime).trim() === '') {
+      startTime = fallbackFromTime;
+    }
+    if (!tcEndTime || String(tcEndTime).trim() === '') {
+      endTime = fallbackToTime;
+    }
+    
+    return EXPRESSION_FUNCTIONS.calculateWorkingHours(startTime, endTime, isOff);
   },
   
   // Single-record time calculation functions (replaces entries-based functions)
@@ -526,6 +534,40 @@ const EXPRESSION_FUNCTIONS = {
     if (!offType || String(offType).toLowerCase() !== 'unpaid leave') return 0;
     return EXPRESSION_FUNCTIONS.calculateBusinessHoursOverlap(fromTime, toTime);
   },
+
+  // Japanese formatting functions
+  formatJapaneseDate: function(dateValue) {
+    if (!dateValue) return '';
+    const date = new Date(dateValue);
+    if (isNaN(date.getTime())) return dateValue;
+    
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    return month + '月' + day.toString().padStart(2, '0') + '日';
+  },
+
+  formatJapaneseDayOfWeek: function(dateValue) {
+    if (!dateValue) return '';
+    const date = new Date(dateValue);
+    if (isNaN(date.getTime())) return '';
+    
+    const days = ['日', '月', '火', '水', '木', '金', '土'];
+    return days[date.getDay()];
+  },
+
+  formatWorkHours: function(tcStartTime, tcEndTime, fallbackFromTime, fallbackToTime, isOff) {
+    const hours = EXPRESSION_FUNCTIONS.calculateCustomerHours(tcStartTime, tcEndTime, fallbackFromTime, fallbackToTime, isOff);
+    if (hours === 0) return '';
+    
+    const wholeHours = Math.floor(hours);
+    const minutes = Math.round((hours - wholeHours) * 60);
+    
+    if (minutes === 0) {
+      return wholeHours + ':00';
+    } else {
+      return wholeHours + ':' + minutes.toString().padStart(2, '0');
+    }
+  }
 };
 
 // Error types for consistent error handling
@@ -641,10 +683,13 @@ const AI_FIELD_MAPPING = {
  * Based on expression-functions.md
  */
 const AI_EXPRESSION_FUNCTIONS = [
-  'calculateCustomerHours(tc_from_time, tc_to_time)',
+  'calculateCustomerHours(tc_from_time, tc_to_time, from_time, to_time, off)',
   'calculateWorkingHours(from_time, to_time, off)',
   'calculateOffHours(from_time, to_time, off)',
   'calculateUnpaidOffHours(from_time, to_time, off, off_type)',
+  'formatJapaneseDate(date)',
+  'formatJapaneseDayOfWeek(date)',
+  'formatWorkHours(tc_from_time, tc_to_time, from_time, to_time, off)',
   'concat(...args)',
   'formatDate(date, format)',
   'formatTime(time, format)',
