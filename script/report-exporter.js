@@ -1315,24 +1315,6 @@ function aggregateByMemberProject(data, numericColumns, config) {
       memberRows.push(boRow);
     }
     
-    // Add the new "column % (Common Dragon is BO)" columns
-    memberRows.forEach(function(row) {
-      numericColumns.forEach(function(column) {
-        if (isCommonDragonProject(row[projectField])) {
-          // Set Common Dragon percentage to empty in new column
-          row[`${column} % (Common Dragon is BO)`] = '';
-        } else if (isBOProject(row[projectField])) {
-          // Add Common Dragon percentage to BO project
-          const originalPercentage = row[`${column} %`];
-          const newPercentage = originalPercentage + commonDragonPercentages[column];
-          row[`${column} % (Common Dragon is BO)`] = newPercentage;
-        } else {
-          // Keep original percentage for other projects
-          row[`${column} % (Common Dragon is BO)`] = row[`${column} %`];
-        }
-      });
-    });
-    
     // Sort projects by first numeric column descending
     if (numericColumns.length > 0) {
       memberRows.sort(function(a, b) {
@@ -1340,13 +1322,55 @@ function aggregateByMemberProject(data, numericColumns, config) {
       });
     }
     
-    // Calculate total percentage once for the member
+    // Round percentages to 2 decimals and ensure totals equal 100%
+    numericColumns.forEach(function(column) {
+      // Round all percentages to 2 decimals first
+      memberRows.forEach(function(row) {
+        row[`${column} %`] = Math.round(row[`${column} %`] * 100) / 100;
+      });
+      
+      // Calculate sum of rounded percentages (excluding last row)
+      let roundedSum = 0;
+      for (let i = 0; i < memberRows.length - 1; i++) {
+        roundedSum += memberRows[i][`${column} %`];
+      }
+      
+      // Adjust last row to make total exactly 100%
+      if (memberRows.length > 0) {
+        memberRows[memberRows.length - 1][`${column} %`] = Math.round((100 - roundedSum) * 100) / 100;
+      }
+    });
+    
+    // Now create the "Common Dragon is BO" column using the final rounded percentages
+    memberRows.forEach(function(row) {
+      numericColumns.forEach(function(column) {
+        if (isCommonDragonProject(row[projectField])) {
+          // Set Common Dragon percentage to empty in new column
+          row[`${column} % (Common Dragon is BO)`] = '';
+        } else if (isBOProject(row[projectField])) {
+          // Add Common Dragon percentage to BO project (both values already rounded)
+          const originalBOPercentage = row[`${column} %`];
+          const commonDragonPercentage = commonDragonPercentages[column] ? Math.round(commonDragonPercentages[column] * 100) / 100 : 0;
+          row[`${column} % (Common Dragon is BO)`] = Math.round((originalBOPercentage + commonDragonPercentage) * 100) / 100;
+        } else {
+          // Keep original percentage for other projects (already rounded)
+          row[`${column} % (Common Dragon is BO)`] = row[`${column} %`];
+        }
+      });
+    });
+    
+    // Calculate total percentage AFTER rounding adjustments using the final rounded values
+    // This sums the percentages across all numeric columns for this member
     let totalPercentage = 0;
     memberRows.forEach(function(row) {
       numericColumns.forEach(function(column) {
-        totalPercentage += row[`${column} %`];
+        totalPercentage += row[`${column} %`]; // These are already rounded numbers
       });
     });
+    
+    // Since each column is guaranteed to sum to 100%, totalPercentage should be 100% × numericColumns.length
+    // But round it anyway to avoid any floating point precision issues
+    totalPercentage = Math.round(totalPercentage * 100) / 100;
     
     // Format and add rows to final results
     memberRows.forEach(function(row, index) {
@@ -1363,18 +1387,20 @@ function aggregateByMemberProject(data, numericColumns, config) {
       
       // Add Total % column
       if (isLastRow) {
-        row['Total %'] = `${totalPercentage}%`;
+        row['Total %'] = `${totalPercentage.toFixed(2)}%`;
       } else {
         row['Total %'] = '';
       }
       
-      // Format percentages as strings (done once per row)
+      // Format percentages as strings (already rounded to 2 decimals)
       numericColumns.forEach(function(column) {
-        row[`${column} %`] = `${row[`${column} %`]}%`;
+        row[`${column} %`] = `${row[`${column} %`].toFixed(2)}%`;
         
         // Format the new "Common Dragon is BO" percentage column
         if (row[`${column} % (Common Dragon is BO)`] !== '') {
-          row[`${column} % (Common Dragon is BO)`] = `${row[`${column} % (Common Dragon is BO)`]}%`;
+          if (typeof row[`${column} % (Common Dragon is BO)`] === 'number') {
+            row[`${column} % (Common Dragon is BO)`] = `${row[`${column} % (Common Dragon is BO)`].toFixed(2)}%`;
+          }
         }
       });
       
