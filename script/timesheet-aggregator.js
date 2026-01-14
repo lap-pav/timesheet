@@ -251,7 +251,7 @@ function readTimesheetData(timesheetFile) {
     try {
       // Open the spreadsheet
       const spreadsheet = SpreadsheetApp.openById(timesheetFile.fileId);
-      const sheet = spreadsheet.getActiveSheet();
+      const sheet = spreadsheet.getSheetByName(AGGREGATION_CONFIG.TIMESHEET_SHEET_NAME);
       
       // Get all data from the sheet using display values (formatted)
       const dataRange = sheet.getDataRange();
@@ -882,10 +882,6 @@ function processTimesheetFile(timesheetFile) {
     
     result.metadata.processingTimeMs = Date.now() - startTime;
     
-    // Log processing summary
-    console.log(`Processed ${timesheetFile.fileName}: ${result.metadata.validEntries} valid entries, ${result.metadata.invalidEntries} invalid entries`);
-    console.log(`Errors and warnings for ${timesheetFile.fileName}:`, result.errors);
-    
   } catch (error) {
     result.errors.push({
       type: ERROR_TYPES.SYSTEM_FAILURE,
@@ -897,6 +893,10 @@ function processTimesheetFile(timesheetFile) {
     });
     result.metadata.processingTimeMs = Date.now() - startTime;
   }
+
+  // Log processing summary
+  console.log(`Processed ${timesheetFile.fileName}: ${result.metadata.validEntries} valid entries, ${result.metadata.invalidEntries} invalid entries`);
+  console.log(`Errors and warnings for ${timesheetFile.fileName}:`, result.errors);
   
   return result;
 }
@@ -1108,7 +1108,7 @@ function aggregateMonthlyTimesheets(monthFolder) {
       entriesPerSecond: result.metadata.totalEntries / (result.metadata.processingTimeMs / 1000)
     };
     
-    console.log(`Aggregation complete: ${result.metadata.totalEntries} entries from ${result.metadata.successfulFiles} files in ${result.metadata.processingTimeMs}ms`);
+    console.log(`Aggregation complete: ${result.metadata.totalEntries} entries from ${result.metadata.successfulFiles} successful files in ${result.metadata.processingTimeMs}ms`);
     
   } catch (error) {
     result.metadata.systemHealthy = false;

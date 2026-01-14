@@ -190,7 +190,9 @@ const AGGREGATION_CONFIG = {
   RETRY_DELAY_MS: 1000,
   
   // Performance tracking
-  CHECKPOINT_INTERVAL: 10 // Log progress every N files
+  CHECKPOINT_INTERVAL: 10, // Log progress every N files
+
+  TIMESHEET_SHEET_NAME: "Report",
 };
 
 // ============================================================================

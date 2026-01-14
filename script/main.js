@@ -26,6 +26,7 @@ function generateTimesheetFiles() {
   const time = readTime();
   const members = readMembers();
   console.log(`Time: ${time}`, `Members: `, members);
+  setupMasterTemplate(time);
   const folder = createTimesheetFolder(time);
   members.forEach(function(member) {
     createTimesheetFile(folder, member, time);
