@@ -980,6 +980,13 @@ function applySummary(data, summaryType, columns, config) {
       return aggregateByProject(data, numericColumns, summaryConfig);
     case 'MEMBER_PROJECT_BREAKDOWN':
       return aggregateByMemberProject(data, numericColumns, summaryConfig);
+    case 'MEMBER_DATE_PIVOT':
+      const pivotResult = createMemberDatePivot(data);
+      // Return just the data array for compatibility, store formatting info separately
+      pivotResult.data.forEach(function(row) {
+        row._formatting = pivotResult.formatting;
+      });
+      return pivotResult.data;
     default:
       return data;
   }
@@ -1412,6 +1419,208 @@ function aggregateByMemberProject(data, numericColumns, config) {
 }
 
 /**
+ * Create pivot table with members as rows and dates as columns
+ * Shows all days in month with highlighting for weekends and hour thresholds
+ * @param {Array} data - Processed timesheet data
+ * @returns {Object} Pivot table data with formatting information
+ */
+function createMemberDatePivot(data) {
+  try {
+    Logger.log(`Creating member-date pivot table from ${data.length} records`);
+    
+    // Step 1: Determine the month and year from data, or use current month
+    let targetMonth, targetYear;
+    if (data.length > 0) {
+      // Use the first record's date to determine month/year
+      const firstRecord = data.find(record => record['Date'] || record.date);
+      if (firstRecord) {
+        const firstDate = new Date(firstRecord['Date'] || firstRecord.date);
+        targetMonth = firstDate.getMonth();
+        targetYear = firstDate.getFullYear();
+      } else {
+        // Fallback to current month
+        const now = new Date();
+        targetMonth = now.getMonth();
+        targetYear = now.getFullYear();
+      }
+    } else {
+      // Fallback to current month
+      const now = new Date();
+      targetMonth = now.getMonth();
+      targetYear = now.getFullYear();
+    }
+    
+    // Step 2: Generate all dates in the target month
+    const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+    const allDatesInMonth = [];
+    const dateFormatInfo = {}; // Store formatting info for each date
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateObj = new Date(targetYear, targetMonth, day);
+      const normalizedDate = `${String(targetMonth + 1).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
+      allDatesInMonth.push(normalizedDate);
+      
+      // Store day of week for formatting (0 = Sunday, 6 = Saturday)
+      const dayOfWeek = dateObj.getDay();
+      dateFormatInfo[normalizedDate] = {
+        dayOfWeek: dayOfWeek,
+        isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+        isWeekday: dayOfWeek >= 1 && dayOfWeek <= 5
+      };
+    }
+    
+    // Step 3: Collect all unique members and process their hours
+    const members = new Set();
+    const memberDateHours = {}; // { member: { date: totalHours } }
+    
+    // Process each record to build member-date matrix
+    data.forEach(function(record) {
+      const memberName = record['Member Name'] || record.member || 'Unknown';
+      const recordDate = record['Date'] || record.date;
+      
+      if (!recordDate || !memberName) return;
+      
+      // Normalize date format to MM/DD for display
+      let normalizedDate;
+      try {
+        const dateObj = new Date(recordDate);
+        if (!isNaN(dateObj.getTime())) {
+          normalizedDate = `${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')}`;
+        } else {
+          normalizedDate = String(recordDate);
+        }
+      } catch (error) {
+        normalizedDate = String(recordDate);
+      }
+      
+      members.add(memberName);
+      
+      // Initialize member data structure
+      if (!memberDateHours[memberName]) {
+        memberDateHours[memberName] = {};
+      }
+      
+      // Calculate total hours for this record
+      let totalHours = 0;
+      
+      // Try to get hours from different possible column names
+      if (record['Total Hours'] !== undefined) {
+        totalHours = parseFloat(record['Total Hours']) || 0;
+      } else if (record['Working Hours'] !== undefined && record['Off Hours'] !== undefined) {
+        totalHours = (parseFloat(record['Working Hours']) || 0) + (parseFloat(record['Off Hours']) || 0);
+      } else {
+        // Fallback: calculate from time fields
+        const workingHours = EXPRESSION_FUNCTIONS.calculateWorkingHours(
+          record.from_time || record['From Time'], 
+          record.to_time || record['To Time'], 
+          record.off || record['Off']
+        );
+        
+        const offHours = EXPRESSION_FUNCTIONS.calculateOffHours(
+          record.from_time || record['From Time'],
+          record.to_time || record['To Time'], 
+          record.off || record['Off']
+        );
+        
+        totalHours = workingHours + offHours;
+      }
+      
+      // Add to member's total for this date
+      if (!memberDateHours[memberName][normalizedDate]) {
+        memberDateHours[memberName][normalizedDate] = 0;
+      }
+      memberDateHours[memberName][normalizedDate] += totalHours;
+    });
+    
+    // Step 4: Sort members alphabetically
+    const sortedMembers = Array.from(members).sort();
+    
+    // Step 5: Build pivot table rows with all dates in month
+    const pivotRows = [];
+    const currentDate = new Date();
+    
+    sortedMembers.forEach(function(memberName) {
+      const memberRow = {
+        'Member Name': memberName
+      };
+      
+      let memberTotal = 0;
+      
+      // Add hours for ALL dates in month
+      allDatesInMonth.forEach(function(date) {
+        const hours = memberDateHours[memberName][date] || 0;
+        memberRow[date] = hours > 0 ? Math.round(hours * 100) / 100 : '';
+        memberTotal += hours;
+      });
+      
+      // Add total column
+      memberRow['Total Hours'] = Math.round(memberTotal * 100) / 100;
+      
+      pivotRows.push(memberRow);
+    });
+    
+    // Step 6: Create formatting information for export
+    const formatInfo = {
+      dateColumns: allDatesInMonth,
+      dateFormatting: {},
+      cellFormatting: {}
+    };
+    
+    // Add date column formatting (weekends vs weekdays)
+    allDatesInMonth.forEach(function(date) {
+      const info = dateFormatInfo[date];
+      formatInfo.dateFormatting[date] = {
+        isWeekend: info.isWeekend,
+        dayOfWeek: info.dayOfWeek
+      };
+    });
+    
+    // Add cell formatting based on hour thresholds (for past dates only)
+    pivotRows.forEach(function(row, rowIndex) {
+      const memberName = row['Member Name'];
+      formatInfo.cellFormatting[memberName] = {};
+      
+      allDatesInMonth.forEach(function(date) {
+        const hours = row[date];
+        const dateObj = new Date(targetYear, targetMonth, parseInt(date.split('/')[1]));
+        const isPastDate = dateObj < currentDate;
+        
+        let cellFormat = 'normal';
+        
+        if (isPastDate) {
+          if (dateFormatInfo[date].isWeekend) {
+            // Any work on weekends is considered overtime
+            if (hours > 0) {
+              cellFormat = 'overtime';
+            }
+          } else {
+            // Weekday formatting: undertime (<8h) or overtime (>8h)
+            if (!hours || hours < 8) {
+              cellFormat = 'undertime'; // Less than 8 hours
+            } else if (hours > 8) {
+              cellFormat = 'overtime'; // Greater than 8 hours
+            }
+          }
+        }
+        
+        formatInfo.cellFormatting[memberName][date] = cellFormat;
+      });
+    });
+    
+    Logger.log(`Created pivot table: ${sortedMembers.length} members x ${allDatesInMonth.length} dates (full month)`);
+    
+    return {
+      data: pivotRows,
+      formatting: formatInfo
+    };
+    
+  } catch (error) {
+    Logger.log('Error creating member-date pivot: ' + error.message);
+    throw error;
+  }
+}
+
+/**
  * Export report data to Google Sheets with enhanced output structure support
  * @param {Array} reportData - Report data to export
  * @param {Object} metadata - Report metadata
@@ -1422,18 +1631,163 @@ function aggregateByMemberProject(data, numericColumns, config) {
 /**
  * Collect all unique column names from all records in the dataset
  * This ensures dynamic columns (like totals) are included in export
+ * Excludes internal metadata properties like _formatting
  */
 function collectAllColumnNames(reportData) {
   const allColumns = new Set();
   
-  // Collect all unique column names from all records
+  // Collect all unique column names from all records, excluding internal metadata
   reportData.forEach(function(record) {
     Object.keys(record).forEach(function(key) {
-      allColumns.add(key);
+      // Exclude internal metadata properties that start with underscore
+      if (!key.startsWith('_')) {
+        allColumns.add(key);
+      }
     });
   });
   
   return Array.from(allColumns);
+}
+
+// ============================================================================
+// PIVOT TABLE FORMATTING CONSTANTS
+// ============================================================================
+
+/**
+ * Color constants for pivot table formatting
+ * Centralized to avoid duplication and ensure consistency
+ */
+const PIVOT_FORMATTING_COLORS = {
+  weekend: '#F3F3F3',      // Light gray for weekends
+  undertime: '#FFA500',    // Orange for < 8 hours
+  overtime: '#6fa8dc',     // Blue for > 8 hours or weekend work
+  normal: '#FFFFFF',       // White for normal cells
+  headerBackground: '#E8F0FE'  // Light blue for headers and guidelines title
+};
+
+/**
+ * Add formatting guidelines to the top of pivot table reports
+ * @param {Sheet} sheet - Google Sheets sheet object
+ * @param {number} maxColumns - Number of columns to span the guidelines
+ */
+function addFormattingGuidelines(sheet, maxColumns) {
+  try {
+    Logger.log('Adding formatting guidelines to report...');
+    
+    // Define the guidelines content
+    const guidelines = [
+      [''],
+      ['🟦 Light Blue: Overtime (>8h on weekdays or ANY hours on weekends)'],
+      ['🟧 Orange: Undertime (<8h on weekdays)'],
+      ['⬜ Gray Background: Weekend columns'],
+      ['']
+    ];
+    
+    // Add guidelines to the sheet
+    guidelines.forEach(function(row, index) {
+      const range = sheet.getRange(index + 1, 1, 1, maxColumns);
+      range.setValues([row.concat(new Array(maxColumns - row.length).fill(''))]);
+      
+      if (index === 0) {
+        // Format title row
+        range.setFontWeight('bold');
+        range.setFontSize(12);
+        range.setBackground(PIVOT_FORMATTING_COLORS.headerBackground);
+      } else if (index > 1 && index < 5) {
+        // Format guideline rows with appropriate colors
+        const cellRange = sheet.getRange(index + 1, 1);
+        if (row[0].includes('Blue')) {
+          cellRange.setBackground(PIVOT_FORMATTING_COLORS.overtime); // Blue
+        } else if (row[0].includes('Red')) {
+          cellRange.setBackground(PIVOT_FORMATTING_COLORS.undertime); // Red
+        } else if (row[0].includes('Gray Background')) {
+          cellRange.setBackground(PIVOT_FORMATTING_COLORS.weekend); // Light gray
+        }
+      }
+    });
+    
+    // Merge title cell across all columns
+    if (maxColumns > 1) {
+      sheet.getRange(1, 1, 1, maxColumns).merge();
+    }
+    
+    Logger.log('Formatting guidelines added successfully');
+    return guidelines.length; // Return number of rows used for guidelines
+    
+  } catch (error) {
+    Logger.log('Error adding formatting guidelines: ' + error.message);
+    return 0; // Return 0 if failed, so data starts at row 1
+  }
+}
+
+/**
+ * Apply formatting to pivot table in Google Sheets
+ * @param {Sheet} sheet - Google Sheets sheet object
+ * @param {Array} reportData - Report data with formatting info
+ * @param {Array} headers - Column headers
+ * @param {number} headerRowOffset - Row number where headers start (default 1)
+ */
+function applyPivotTableFormatting(sheet, reportData, headers, headerRowOffset) {
+  headerRowOffset = headerRowOffset || 1; // Default to row 1 if not specified
+  
+  try {
+    const formatting = reportData[0]._formatting;
+    if (!formatting) return;
+    
+    Logger.log('Applying pivot table formatting...');
+    
+    // Use centralized color constants
+    const colors = PIVOT_FORMATTING_COLORS;
+    
+    // Format header row for date columns (weekends)
+    headers.forEach(function(header, colIndex) {
+      if (formatting.dateFormatting[header] && formatting.dateFormatting[header].isWeekend) {
+        const headerCell = sheet.getRange(headerRowOffset, colIndex + 1);
+        headerCell.setBackground(colors.weekend);
+        headerCell.setFontWeight('bold');
+      }
+    });
+    
+    // Format weekend columns for all data rows FIRST (as base layer)
+    headers.forEach(function(header, colIndex) {
+      if (formatting.dateFormatting[header] && formatting.dateFormatting[header].isWeekend) {
+        const dataRange = sheet.getRange(headerRowOffset + 1, colIndex + 1, reportData.length, 1);
+        dataRange.setBackground(colors.weekend);
+      }
+    });
+    
+    // Format data cells based on hour thresholds (will override weekend gray for overtime/undertime)
+    reportData.forEach(function(row, rowIndex) {
+      const memberName = row['Member Name'];
+      const memberFormatting = formatting.cellFormatting[memberName];
+      
+      if (!memberFormatting) return;
+      
+      headers.forEach(function(header, colIndex) {
+        // Skip non-date columns
+        if (header === 'Member Name' || header === 'Total Hours') return;
+        
+        const cellFormat = memberFormatting[header];
+        if (!cellFormat || cellFormat === 'normal') return;
+        
+        const cellRange = sheet.getRange(headerRowOffset + 1 + rowIndex, colIndex + 1);
+        
+        switch (cellFormat) {
+          case 'undertime':
+            cellRange.setBackground(colors.undertime);
+            break;
+          case 'overtime':
+            cellRange.setBackground(colors.overtime);
+            break;
+        }
+      });
+    });
+    
+    Logger.log('Pivot table formatting applied successfully');
+    
+  } catch (error) {
+    Logger.log('Error applying pivot table formatting: ' + error.message);
+  }
 }
 
 function exportReportToGoogleSheets(reportData, metadata, outputLocation, outputStructure) {
@@ -1476,12 +1830,21 @@ function exportReportToGoogleSheets(reportData, metadata, outputLocation, output
     
     // Set up headers - collect ALL column names from all records
     const headers = collectAllColumnNames(reportData);
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    
+    // Add formatting guidelines for pivot tables (if applicable)
+    let headerRowOffset = 1;
+    if (reportData.length > 0 && reportData[0]._formatting) {
+      const guidelinesRowCount = addFormattingGuidelines(sheet, headers.length);
+      headerRowOffset = guidelinesRowCount + 1;
+    }
+    
+    // Add headers at appropriate row
+    sheet.getRange(headerRowOffset, 1, 1, headers.length).setValues([headers]);
     
     // Format headers
-    const headerRange = sheet.getRange(1, 1, 1, headers.length);
+    const headerRange = sheet.getRange(headerRowOffset, 1, 1, headers.length);
     headerRange.setFontWeight('bold');
-    headerRange.setBackground('#E8F0FE');
+    headerRange.setBackground(PIVOT_FORMATTING_COLORS.headerBackground);
     
     // Add data
     const dataRows = reportData.map(function(record) {
@@ -1491,7 +1854,12 @@ function exportReportToGoogleSheets(reportData, metadata, outputLocation, output
     });
     
     if (dataRows.length > 0) {
-      sheet.getRange(2, 1, dataRows.length, headers.length).setValues(dataRows);
+      sheet.getRange(headerRowOffset + 1, 1, dataRows.length, headers.length).setValues(dataRows);
+    }
+    
+    // Apply special formatting for pivot tables
+    if (reportData.length > 0 && reportData[0]._formatting) {
+      applyPivotTableFormatting(sheet, reportData, headers, headerRowOffset);
     }
     
     // Auto-resize columns

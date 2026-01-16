@@ -1062,6 +1062,7 @@ function aggregateMonthlyTimesheets(monthFolder) {
       // Process batch
       for (const file of batch) {
         try {
+          console.log(`Processing file: ${file.fileName} for member: ${file.memberName}`);
           const processingResult = processTimesheetFile(file);
           
           // Collect results
@@ -1080,6 +1081,7 @@ function aggregateMonthlyTimesheets(monthFolder) {
           }
           
         } catch (fileError) {
+          console.error(`Critical error processing file ${file.fileName}:`, fileError);
           result.errors.push({
             type: ERROR_TYPES.SYSTEM_FAILURE,
             source: 'BATCH_PROCESSING',

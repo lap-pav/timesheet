@@ -224,7 +224,7 @@ const REPORT_CONFIG = {
   
   // Valid enumeration values
   VALID_SORT_ORDERS: ['ASC', 'DESC'],
-  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS', 'MEMBER_PROJECT_BREAKDOWN'],
+  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS', 'MEMBER_PROJECT_BREAKDOWN', 'MEMBER_DATE_PIVOT'],
   VALID_OUTPUT_STRUCTURES: ['SINGLE_SHEET', 'SHEET_PER_PROJECT', 'SHEET_PER_EMPLOYEE', 'FILE_PER_PROJECT', 'FILE_PER_EMPLOYEE'],
   
   // Column name mappings from aggregated data to display names
@@ -338,6 +338,7 @@ const REPORT_CONFIG = {
     'Hours': 'calculateWorkingHours(record.from_time, record.to_time, record.off)',
     'Off Hours': 'calculateOffHours(record.from_time, record.to_time, record.off)',
     'Unpaid Off Hours': 'calculateUnpaidOffHours(record.from_time, record.to_time, record.off, record.off_type)',
+    'Total Hours': 'calculateWorkingHours(record.from_time, record.to_time, record.off) + calculateOffHours(record.from_time, record.to_time, record.off)',
     'Project Name': 'record.project',
     'Task Type': 'record.task_type',
     'Task Description': 'record.description',
@@ -657,7 +658,7 @@ const AI_ENDPOINTS = {
 const AI_REPORT_CONFIG = {
   MAX_REPORT_NAME_LENGTH: 50,
   MAX_DESCRIPTION_LENGTH: 200,
-  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS', 'MEMBER_PROJECT_BREAKDOWN'],
+  VALID_SUMMARY_TYPES: ['NONE', 'MEMBER_TOTALS', 'DAILY_TOTALS', 'PROJECT_TOTALS', 'MEMBER_PROJECT_BREAKDOWN', 'MEMBER_DATE_PIVOT'],
   VALID_OUTPUT_STRUCTURES: ['SINGLE_SHEET', 'SHEET_PER_PROJECT', 'SHEET_PER_EMPLOYEE', 'FILE_PER_PROJECT', 'FILE_PER_EMPLOYEE'],
   VALID_SORT_ORDERS: ['ASC', 'DESC']
 };
