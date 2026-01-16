@@ -1471,7 +1471,7 @@ function createMemberDatePivot(data) {
     
     // Step 3: Collect all unique members and process their hours
     const members = new Set();
-    const memberDateHours = {}; // { member: { date: totalHours } }
+    const memberDateHours = {}; // { member: { date: { totalHours, offHours } } }
     
     // Process each record to build member-date matrix
     data.forEach(function(record) {
@@ -1500,36 +1500,16 @@ function createMemberDatePivot(data) {
         memberDateHours[memberName] = {};
       }
       
-      // Calculate total hours for this record
-      let totalHours = 0;
+      // Calculate total hours and off hours for this record
+      let totalHours = record['Total Hours'] ? parseFloat(record['Total Hours']) : 0;
+      let offHours = record['Total Off Hours'] ? parseFloat(record['Total Off Hours']) : 0;
       
-      // Try to get hours from different possible column names
-      if (record['Total Hours'] !== undefined) {
-        totalHours = parseFloat(record['Total Hours']) || 0;
-      } else if (record['Working Hours'] !== undefined && record['Off Hours'] !== undefined) {
-        totalHours = (parseFloat(record['Working Hours']) || 0) + (parseFloat(record['Off Hours']) || 0);
-      } else {
-        // Fallback: calculate from time fields
-        const workingHours = EXPRESSION_FUNCTIONS.calculateWorkingHours(
-          record.from_time || record['From Time'], 
-          record.to_time || record['To Time'], 
-          record.off || record['Off']
-        );
-        
-        const offHours = EXPRESSION_FUNCTIONS.calculateOffHours(
-          record.from_time || record['From Time'],
-          record.to_time || record['To Time'], 
-          record.off || record['Off']
-        );
-        
-        totalHours = workingHours + offHours;
-      }
-      
-      // Add to member's total for this date
+      // Add to member's totals for this date
       if (!memberDateHours[memberName][normalizedDate]) {
-        memberDateHours[memberName][normalizedDate] = 0;
+        memberDateHours[memberName][normalizedDate] = { totalHours: 0, offHours: 0 };
       }
-      memberDateHours[memberName][normalizedDate] += totalHours;
+      memberDateHours[memberName][normalizedDate].totalHours += totalHours;
+      memberDateHours[memberName][normalizedDate].offHours += offHours;
     });
     
     // Step 4: Sort members alphabetically
@@ -1545,16 +1525,21 @@ function createMemberDatePivot(data) {
       };
       
       let memberTotal = 0;
+      let memberOffTotal = 0;
       
       // Add hours for ALL dates in month
       allDatesInMonth.forEach(function(date) {
-        const hours = memberDateHours[memberName][date] || 0;
-        memberRow[date] = hours > 0 ? Math.round(hours * 100) / 100 : '';
-        memberTotal += hours;
+        const dateHours = memberDateHours[memberName][date] || { totalHours: 0, offHours: 0 };
+        const totalHours = dateHours.totalHours;
+        
+        memberRow[date] = totalHours > 0 ? Math.round(totalHours * 100) / 100 : '';
+        memberTotal += totalHours;
+        memberOffTotal += dateHours.offHours;
       });
       
-      // Add total column
+      // Add total columns
       memberRow['Total Hours'] = Math.round(memberTotal * 100) / 100;
+      memberRow['Total Off Hours'] = Math.round((memberOffTotal || 0) * 100) / 100;
       
       pivotRows.push(memberRow);
     });
@@ -1677,9 +1662,9 @@ function addFormattingGuidelines(sheet, maxColumns) {
     // Define the guidelines content
     const guidelines = [
       [''],
-      ['🟦 Light Blue: Overtime (>8h on weekdays or ANY hours on weekends)'],
-      ['🟧 Orange: Undertime (<8h on weekdays)'],
-      ['⬜ Gray Background: Weekend columns'],
+      ['Overtime (>8h on weekdays or ANY hours on weekends)'],
+      ['Undertime (<8h on weekdays)'],
+      ['Weekend columns'],
       ['']
     ];
     
@@ -1693,14 +1678,14 @@ function addFormattingGuidelines(sheet, maxColumns) {
         range.setFontWeight('bold');
         range.setFontSize(12);
         range.setBackground(PIVOT_FORMATTING_COLORS.headerBackground);
-      } else if (index > 1 && index < 5) {
+      } else if (index > 0 && index < 4) {
         // Format guideline rows with appropriate colors
         const cellRange = sheet.getRange(index + 1, 1);
-        if (row[0].includes('Blue')) {
+        if (row[0].includes('Overtime')) {
           cellRange.setBackground(PIVOT_FORMATTING_COLORS.overtime); // Blue
-        } else if (row[0].includes('Red')) {
+        } else if (row[0].includes('Undertime')) {
           cellRange.setBackground(PIVOT_FORMATTING_COLORS.undertime); // Red
-        } else if (row[0].includes('Gray Background')) {
+        } else if (row[0].includes('Weekend')) {
           cellRange.setBackground(PIVOT_FORMATTING_COLORS.weekend); // Light gray
         }
       }
@@ -1765,7 +1750,7 @@ function applyPivotTableFormatting(sheet, reportData, headers, headerRowOffset) 
       
       headers.forEach(function(header, colIndex) {
         // Skip non-date columns
-        if (header === 'Member Name' || header === 'Total Hours') return;
+        if (header === 'Member Name' || header === 'Total Hours' || header === 'Total Off Hours') return;
         
         const cellFormat = memberFormatting[header];
         if (!cellFormat || cellFormat === 'normal') return;
