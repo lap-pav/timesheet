@@ -2049,7 +2049,7 @@ function ensureReportFolder(basePath, reportName, timeperiod) {
       baseFolder = DriveApp.getRootFolder(); // Fallback to root if no parent
     }
     
-    // Step 2: Create or find main "Timesheet Reports" folder in the same directory
+    // Step 2: Create or find main "Report Outputs" folder in the same directory
     const mainFolderName = REPORT_CONFIG.REPORT_FOLDER_CONFIG.MAIN_FOLDER_NAME;
     let mainFolder;
     

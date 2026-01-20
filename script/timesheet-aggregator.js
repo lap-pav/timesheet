@@ -3,7 +3,7 @@
 // ============================================================================
 
 /**
- * Discovers the Google Drive folder for a specific month
+ * Discovers the Google Drive folder for a specific month within the Member Timesheets folder
  * @param {string} yearMonth - Month in YYYY-MM format (e.g., "2025-09")
  * @returns {Object} Result object with folder and any errors
  */
@@ -51,8 +51,37 @@ function getMonthlyFolder(yearMonth) {
       return result;
     }
     
-    // Search for folders matching the month name within the script's parent folder
-    const subfolders = scriptFolder.getFolders();
+    // Find the "Member Timesheets" folder within the script's parent folder
+    let timesheetFolder;
+    try {
+      const timesheetFolders = scriptFolder.getFoldersByName(AGGREGATION_CONFIG.TIMESHEET_FOLDER);
+      if (!timesheetFolders.hasNext()) {
+        result.errors.push({
+          type: ERROR_TYPES.FOLDER_ACCESS,
+          source: 'TIMESHEET_FOLDER_DISCOVERY',
+          message: 'No folder found with name \'' + AGGREGATION_CONFIG.TIMESHEET_FOLDER + '\' in the script location. Please ensure the Member Timesheets folder exists in the same folder as the script.',
+          severity: SEVERITY_LEVELS.ERROR,
+          timestamp: new Date().toISOString()
+        });
+        result.metadata.searchTimeMs = Date.now() - startTime;
+        return result;
+      }
+      
+      timesheetFolder = timesheetFolders.next();
+    } catch (folderError) {
+      result.errors.push({
+        type: ERROR_TYPES.FOLDER_ACCESS,
+        source: 'TIMESHEET_FOLDER_ACCESS',
+        message: 'Could not access Member Timesheets folder: ' + folderError.message,
+        severity: SEVERITY_LEVELS.ERROR,
+        timestamp: new Date().toISOString()
+      });
+      result.metadata.searchTimeMs = Date.now() - startTime;
+      return result;
+    }
+    
+    // Search for folders matching the month name within the Member Timesheets folder
+    const subfolders = timesheetFolder.getFolders();
     const foundFolders = [];
     
     while (subfolders.hasNext()) {
@@ -69,7 +98,7 @@ function getMonthlyFolder(yearMonth) {
       result.errors.push({
         type: ERROR_TYPES.FOLDER_ACCESS,
         source: 'FOLDER_DISCOVERY',
-        message: 'No folder found with name \'' + yearMonth + '\' in the script location. Please ensure the monthly folder exists in the same folder as the script.',
+        message: 'No folder found with name \'' + yearMonth + '\' in the Member Timesheets folder. Please ensure the monthly folder exists within the \'' + AGGREGATION_CONFIG.TIMESHEET_FOLDER + '\' folder.',
         severity: SEVERITY_LEVELS.ERROR,
         timestamp: new Date().toISOString()
       });
@@ -80,7 +109,7 @@ function getMonthlyFolder(yearMonth) {
       result.errors.push({
         type: ERROR_TYPES.FOLDER_ACCESS,
         source: 'FOLDER_DISCOVERY',
-        message: 'Found ' + foundFolders.length + ' folders named \'' + yearMonth + '\' in the script location. Using the first one found.',
+        message: 'Found ' + foundFolders.length + ' folders named \'' + yearMonth + '\' in the Member Timesheets folder. Using the first one found.',
         severity: SEVERITY_LEVELS.WARNING,
         timestamp: new Date().toISOString(),
         details: {

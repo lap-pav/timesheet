@@ -89,7 +89,7 @@
 - Each report generation uses exactly one configuration
 - Configuration changes don't affect previously generated reports
 
-### Aggregated Data → Report Output
+### Aggregated Data → Report Outputs
 - One set of aggregated data can be used for multiple report types
 - Each report contains a subset/transformation of the aggregated data
 - Original aggregated data remains unchanged during report generation

@@ -192,6 +192,8 @@ const AGGREGATION_CONFIG = {
   // Performance tracking
   CHECKPOINT_INTERVAL: 10, // Log progress every N files
 
+  TIMESHEET_FOLDER: "Member Timesheets",
+
   TIMESHEET_SHEET_NAME: "Report",
 };
 
@@ -300,7 +302,7 @@ const REPORT_CONFIG = {
   
   // Report organization settings
   REPORT_FOLDER_CONFIG: {
-    MAIN_FOLDER_NAME: 'Timesheet Reports',
+    MAIN_FOLDER_NAME: 'Report Outputs',
     MONTHLY_SUBFOLDERS: true, // Create YYYY-MM subfolders
     PROJECT_SUBFOLDERS: false, // Create project-specific subfolders when filtering by project
     NAMING_PATTERN: '{reportName}_{timestamp}',

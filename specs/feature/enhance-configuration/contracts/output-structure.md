@@ -246,7 +246,7 @@
     }
   },
   "folderStructure": {
-    "root": "Timesheet Reports",
+    "root": "Report Outputs",
     "pattern": "{reportName}_{timestamp}",
     "cleanup": "Keep last 50 report folders"
   }
