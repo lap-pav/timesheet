@@ -1,0 +1,37 @@
+{
+  "env": {
+    "browser": false,
+    "node": false,
+    "googleappsscript/googleappsscript": true
+  },
+  "extends": [
+    "eslint:recommended"
+  ],
+  "plugins": [
+    "googleappsscript"
+  ],
+  "parserOptions": {
+    "ecmaVersion": 2018,
+    "sourceType": "script"
+  },
+  "rules": {
+    "no-var": "off",
+    "prefer-const": "warn",
+    "no-unused-vars": "warn",
+    "no-console": "off",
+    "camelcase": "error",
+    "prefer-arrow-callback": "off",
+    "func-names": "off",
+    "object-shorthand": "off",
+    "no-restricted-globals": ["error", "name", "length", "event"],
+    "no-implicit-globals": "error"
+  },
+  "globals": {
+    "console": "readonly",
+    "Logger": "readonly",
+    "DriveApp": "readonly",
+    "SpreadsheetApp": "readonly",
+    "Utilities": "readonly",
+    "Session": "readonly"
+  }
+}

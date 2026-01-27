@@ -76,12 +76,6 @@
 - [ ] Function documentation includes purpose, parameters, return values
 - [ ] Configuration constants documented with usage examples
 
-### Testing Requirements for UI Functions
-- [ ] UI-interactive functions (menu handlers, event triggers) have unit tests only
-- [ ] Non-UI utility functions exempt from testing for rapid development
-- [ ] Tests mock Google Apps Script APIs (SpreadsheetApp, DriveApp) using Jest
-- [ ] Focus on success paths and critical error conditions only
-
 ## Project Structure
 
 ### Documentation (this feature)

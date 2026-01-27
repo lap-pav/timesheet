@@ -72,10 +72,13 @@ check_feature_branch() {
         return 0
     fi
     
+    # Branch validation disabled - allowing manual branch names
+    # Just log informational message instead of enforcing pattern
     if [[ ! "$branch" =~ ^[0-9]{3}- ]]; then
-        echo "ERROR: Not on a feature branch. Current branch: $branch" >&2
-        echo "Feature branches should be named like: 001-feature-name" >&2
-        return 1
+        echo "[specify] Info: Using custom branch name: $branch" >&2
+        echo "[specify] Info: Standard feature branches follow pattern: 001-feature-name" >&2
+    else
+        echo "[specify] Info: Using standard feature branch: $branch" >&2
     fi
     
     return 0

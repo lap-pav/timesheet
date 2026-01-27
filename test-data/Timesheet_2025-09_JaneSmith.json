@@ -1,0 +1,22 @@
+[
+  {
+    "date": "2025-09-15",
+    "fromTime": "10:00",
+    "toTime": "18:00", 
+    "project": "Project Gamma",
+    "taskType": "Design",
+    "description": "UI mockups and wireframes",
+    "tcFromTime": "",
+    "tcToTime": ""
+  },
+  {
+    "date": "2025-09-16",
+    "fromTime": "09:30",
+    "toTime": "17:30",
+    "project": "Project Gamma", 
+    "taskType": "Development",
+    "description": "Frontend component implementation",
+    "tcFromTime": "",
+    "tcToTime": ""
+  }
+]

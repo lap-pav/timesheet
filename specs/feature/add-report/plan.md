@@ -1,8 +1,8 @@
 
-# Implementation Plan: [FEATURE]
+# Implementation Plan: AI-Powered Report Generation
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Branch**: `feature/add-report` | **Date**: 2025-10-28 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `/Users/lap/pav/projects/training/ai/tools/timesheet/specs/feature/add-report/spec.md`
 
 ## Execution Flow (/plan command scope)
 ```
@@ -31,56 +31,58 @@
 - Phase 3-4: Implementation execution (manual or via tools)
 
 ## Summary
-[Extract from feature spec: primary requirement + technical approach from research]
+Enable business users to create custom timesheet reports through natural language input. System uses Gemini (primary) and Claude (fallback) AI services to automatically generate report configurations in the existing Report Configs Sheet format, with full semantic validation and local caching for performance.
 
 ## Technical Context
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [single/web/mobile - determines source structure]  
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
+**Language/Version**: JavaScript ES5/ES6 subset (Google Apps Script runtime)  
+**Primary Dependencies**: Google Workspace APIs (SpreadsheetApp, DriveApp), Gemini AI API, Claude AI API  
+**Storage**: Google Sheets (Report Configs Sheet), Google Apps Script Properties Service (encrypted API keys), local cache  
+**Testing**: Jest framework with Google Apps Script API mocks for UI functions only  
+**Target Platform**: Google Apps Script cloud runtime with Google Sheets frontend
+**Project Type**: single (Google Apps Script project with integrated sheets)  
+**Performance Goals**: <3 seconds for AI response with caching, <1 second for cached results  
+**Constraints**: Google Apps Script 6-minute execution limit, AI service rate limits, minimal external dependencies per constitution  
+**Scale/Scope**: 10-50 concurrent users, support for complex report configurations with expressions from REPORT_CONFIGS_EXAMPLES.md format
+
+**Additional Context from User**: Generate config by AI with context and examples from REPORT_CONFIGS_EXAMPLES.md so AI can generate exact configuration format including expression-based column transformations, filters, grouping, and output structure options.
 
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 ### Google Apps Script Structure Compliance
-- [ ] Code structured for single-file deployment to Google Apps Script
-- [ ] No external dependencies beyond Google Workspace APIs
-- [ ] Functions are standalone and self-contained
-- [ ] Constants declared at top level for easy configuration
+- [x] Code structured for single-file deployment to Google Apps Script
+- [x] No external dependencies beyond Google Workspace APIs (Gemini/Claude via HTTP)
+- [x] Functions are standalone and self-contained
+- [x] Constants declared at top level for easy configuration
 
 ### Function-Based Architecture Compliance  
-- [ ] Features implemented as independent functions with clear naming
-- [ ] camelCase naming convention followed
-- [ ] Single responsibility per function
-- [ ] No complex class hierarchies or unsupported JavaScript features
+- [x] Features implemented as independent functions with clear naming
+- [x] camelCase naming convention followed
+- [x] Single responsibility per function
+- [x] No complex class hierarchies or unsupported JavaScript features
 
 ### Data Flow Clarity
-- [ ] Read → Process → Output pattern maintained
-- [ ] Consistent variable naming throughout
-- [ ] Minimal nesting levels
-- [ ] Explicit and traceable data transformation steps
+- [x] Read → Process → Output pattern maintained (natural language → AI → validation → storage)
+- [x] Consistent variable naming throughout
+- [x] Minimal nesting levels
+- [x] Explicit and traceable data transformation steps
 
 ### Error Handling & Logging
-- [ ] Try-catch blocks implemented where necessary
-- [ ] console.log() used for debugging, Logger.log() for production
-- [ ] Graceful degradation where possible
-- [ ] User-facing errors via SpreadsheetApp.getUi().alert()
+- [x] Try-catch blocks implemented where necessary
+- [x] console.log() used for debugging, Logger.log() for production
+- [x] Graceful degradation where possible (fallback to Claude, detailed error messages)
+- [x] User-facing errors via SpreadsheetApp.getUi().alert()
 
 ### Documentation & Comments
-- [ ] Inline comments explain business logic and Google Apps Script specifics
-- [ ] Function documentation includes purpose, parameters, return values
-- [ ] Configuration constants documented with usage examples
+- [x] Inline comments explain business logic and Google Apps Script specifics
+- [x] Function documentation includes purpose, parameters, return values
+- [x] Configuration constants documented with usage examples
 
 ### Testing Requirements for UI Functions
-- [ ] UI-interactive functions (menu handlers, event triggers) have unit tests only
-- [ ] Non-UI utility functions exempt from testing for rapid development
-- [ ] Tests mock Google Apps Script APIs (SpreadsheetApp, DriveApp) using Jest
-- [ ] Focus on success paths and critical error conditions only
+- [x] UI-interactive functions (menu handlers, event triggers) have unit tests only
+- [x] Non-UI utility functions exempt from testing for rapid development
+- [x] Tests mock Google Apps Script APIs (SpreadsheetApp, DriveApp) using Jest
+- [x] Focus on success paths and critical error conditions only
 
 ## Project Structure
 
@@ -181,17 +183,29 @@ directories captured above]
 **Task Generation Strategy**:
 - Load `.specify/templates/tasks-template.md` as base
 - Generate tasks from Phase 1 design docs (contracts, data model, quickstart)
-- Each contract → contract test task [P]
-- Each entity → model creation task [P] 
-- Each user story → integration test task
-- Implementation tasks to make tests pass
+- Core API functions → implementation tasks [P] (independent functions)
+- UI integration → menu setup and dialog handling tasks
+- AI service integration → API call and response parsing tasks [P]
+- Validation logic → semantic validation and error handling tasks [P]
+- Caching system → cache management tasks [P]
+- Unit tests → UI function testing tasks (per constitution)
+- Integration tests → end-to-end workflow testing tasks
 
 **Ordering Strategy**:
-- TDD order: Tests before implementation 
-- Dependency order: Models before services before UI
-- Mark [P] for parallel execution (independent files)
+- TDD order: Unit tests for UI functions first
+- Foundation order: Constants and utilities → Core functions → UI integration
+- Google Apps Script constraints: Single-file deployment preparation
+- Mark [P] for parallel execution (independent Google Apps Script functions)
 
-**Estimated Output**: 25-30 numbered, ordered tasks in tasks.md
+**Specific Task Categories**:
+1. **Setup Tasks**: API key management, constants configuration
+2. **Core Function Tasks**: AI service calls, response parsing, validation  
+3. **UI Integration Tasks**: Menu handlers, dialogs, user feedback
+4. **Cache Management Tasks**: PropertiesService integration, cache logic
+5. **Testing Tasks**: Jest tests for UI functions, integration scenarios
+6. **Documentation Tasks**: Function documentation, deployment guide
+
+**Estimated Output**: 20-25 numbered, ordered tasks in tasks.md focused on Google Apps Script function-based implementation
 
 **IMPORTANT**: This phase is executed by the /tasks command, NOT by /plan
 
@@ -203,30 +217,31 @@ directories captured above]
 **Phase 5**: Validation (run tests, execute quickstart.md, performance validation)
 
 ## Complexity Tracking
-*Fill ONLY if Constitution Check has violations that must be justified*
-
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
-
+*No constitutional violations detected - all requirements align with Google Apps Script architecture and constraints*
 
 ## Progress Tracking
 *This checklist is updated during execution flow*
 
 **Phase Status**:
-- [ ] Phase 0: Research complete (/plan command)
-- [ ] Phase 1: Design complete (/plan command)
-- [ ] Phase 2: Task planning complete (/plan command - describe approach only)
+- [x] Phase 0: Research complete (/plan command) - research.md generated
+- [x] Phase 1: Design complete (/plan command) - data-model.md, contracts/, quickstart.md generated
+- [x] Phase 2: Task planning complete (/plan command - approach described below)
 - [ ] Phase 3: Tasks generated (/tasks command)
 - [ ] Phase 4: Implementation complete
 - [ ] Phase 5: Validation passed
 
 **Gate Status**:
-- [ ] Initial Constitution Check: PASS
-- [ ] Post-Design Constitution Check: PASS
-- [ ] All NEEDS CLARIFICATION resolved
-- [ ] Complexity deviations documented
+- [x] Initial Constitution Check: PASS - All requirements compatible with Google Apps Script
+- [x] Post-Design Constitution Check: PASS - Design maintains constitutional compliance
+- [x] All NEEDS CLARIFICATION resolved - Clarifications session completed
+- [x] Complexity deviations documented - No deviations needed
+
+**Artifacts Generated**:
+- [x] research.md - AI service integration and implementation decisions
+- [x] data-model.md - Complete entity model and field mappings  
+- [x] contracts/ai-report-generation.md - Function contracts and API specifications
+- [x] quickstart.md - Implementation guide with code examples
+- [x] .github/copilot-instructions.md - Updated agent context
 
 ---
 *Based on Constitution v2.1.1 - See `/memory/constitution.md`*
