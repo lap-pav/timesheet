@@ -11,13 +11,14 @@ function createTimesheetFolder(time) {
   const folderName = `${time}`;
   //create folder in current spreadsheet folder
   const parentFolder = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId()).getParents().next();
+  const memberTimesheetFolder = parentFolder.getFoldersByName(AGGREGATION_CONFIG.TIMESHEET_FOLDER).next();
   let folder;
   //check if folder already exists
-  const folders = parentFolder.getFoldersByName(folderName);
+  const folders = memberTimesheetFolder.getFoldersByName(folderName);
   if (folders.hasNext()) {
     folder = folders.next();
   } else {
-    folder = parentFolder.createFolder(folderName);
+    folder = memberTimesheetFolder.createFolder(folderName);
   }
   return folder;
 }
@@ -45,6 +46,127 @@ function createTimesheetFile(folder, member, time) {
   if (member[MEMBER_COLUMNS.EMAIL]) {
     //add member as editor
     newFile.addEditor(member[MEMBER_COLUMNS.EMAIL]);
+  }
+}
+
+/**
+ * Change member's permission from editor to viewer for their timesheet file
+ * @param {Object} folder - Google Drive folder object
+ * @param {Array} member - Member data array
+ * @param {string} time - Time period in YYYY-MM format
+ * @returns {Object} Result with success status and message
+ */
+function changeTimesheetPermissionToViewer(folder, member, time) {
+  try {
+    const fileName = `Timesheet_${time}_${member[MEMBER_COLUMNS.NAME]}`;
+    const files = folder.getFilesByName(fileName);
+    
+    if (!files.hasNext()) {
+      return {
+        success: false,
+        message: `File not found: ${fileName}`
+      };
+    }
+    
+    const file = files.next();
+    const memberEmail = member[MEMBER_COLUMNS.EMAIL];
+    
+    if (!memberEmail) {
+      return {
+        success: false,
+        message: `No email found for member: ${member[MEMBER_COLUMNS.NAME]}`
+      };
+    }
+    
+    // Remove editor permission
+    file.removeEditor(memberEmail);
+    
+    // Add viewer permission
+    file.addViewer(memberEmail);
+    
+    Logger.log(`Changed permission for ${memberEmail} from editor to viewer: ${fileName}`);
+    
+    return {
+      success: true,
+      message: `Successfully changed permission for ${member[MEMBER_COLUMNS.NAME]}`
+    };
+    
+  } catch (error) {
+    Logger.log(`Error changing permission for ${member[MEMBER_COLUMNS.NAME]}: ${error.message}`);
+    return {
+      success: false,
+      message: `Error: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Change all member timesheet permissions from editor to viewer for a specific time period
+ * @param {string} time - Time period in YYYY-MM format
+ * @returns {Object} Result with success counts and errors
+ */
+function changeAllTimesheetsToViewOnly(time) {
+  try {
+    Logger.log(`Starting permission change for time period: ${time}`);
+    
+    const result = {
+      processed: 0,
+      success: 0,
+      failed: 0,
+      errors: []
+    };
+    
+    // Get members using the same method as generateTimesheetFiles
+    const members = readMembers();
+    
+    if (!members || members.length === 0) {
+      result.errors.push('No members found');
+      return result;
+    }
+    
+    // Get the folder using the same method as generateTimesheetFiles
+    const folder = createTimesheetFolder(time);
+    
+    Logger.log(`Found ${members.length} members, processing folder: ${folder.getName()}`);
+    
+    // Process each member
+    members.forEach(function(member) {
+      result.processed++;
+      
+      const changeResult = changeTimesheetPermissionToViewer(folder, member, time);
+      
+      if (changeResult.success) {
+        result.success++;
+        Logger.log(`✓ ${changeResult.message}`);
+      } else {
+        result.failed++;
+        result.errors.push(changeResult.message);
+        Logger.log(`✗ ${changeResult.message}`);
+      }
+      
+      // Add delay every 10 files to avoid quota issues
+      if (result.processed % 10 === 0) {
+        Utilities.sleep(1000);
+      }
+    });
+    
+    Logger.log('=== Permission Change Summary ===');
+    Logger.log(`Total processed: ${result.processed}`);
+    Logger.log(`Successfully changed: ${result.success}`);
+    Logger.log(`Failed: ${result.failed}`);
+    
+    if (result.errors.length > 0) {
+      Logger.log('Errors:');
+      result.errors.forEach(function(error) {
+        Logger.log(`  - ${error}`);
+      });
+    }
+    
+    return result;
+    
+  } catch (error) {
+    Logger.log(`Error in changeAllTimesheetsToViewOnly: ${error.message}`);
+    throw error;
   }
 }
 
@@ -121,6 +243,11 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
     let currentRow = DATA_START_ROW;
     const dailySummaryRows = []; // Track summary row positions for each day
     
+    // Generate column letters using TEMPLATE_CONFIG
+    const dateColumnLetter = getColumnLetter(TEMPLATE_CONFIG.DATE_COLUMN);
+    const fromTimeColumnLetter = getColumnLetter(TEMPLATE_CONFIG.FROM_TIME_COLUMN);
+    const toTimeColumnLetter = getColumnLetter(TEMPLATE_CONFIG.TO_TIME_COLUMN);
+
     // Process each day in the month
     for (let day = 1; day <= daysInMonth; day++) {
       const currentDate = new Date(year, month - 1, day);
@@ -159,11 +286,6 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
         // Add daily summary on the second row using your SUMIFS formula
         const dailySummaryCell = sheet.getRange(currentRow + 1, TEMPLATE_CONFIG.DAILY_TOTAL_COLUMN);
         
-        // Generate column letters using TEMPLATE_CONFIG
-        const dateColumnLetter = getColumnLetter(TEMPLATE_CONFIG.DATE_COLUMN);
-        const fromTimeColumnLetter = getColumnLetter(TEMPLATE_CONFIG.FROM_TIME_COLUMN);
-        const toTimeColumnLetter = getColumnLetter(TEMPLATE_CONFIG.TO_TIME_COLUMN);
-        
         const dailyTotalFormula = `=(SUMIFS($${toTimeColumnLetter}:$${toTimeColumnLetter},$${dateColumnLetter}:$${dateColumnLetter},$${dateColumnLetter}${currentRow + 1},$${fromTimeColumnLetter}:$${fromTimeColumnLetter},"<>",$${toTimeColumnLetter}:$${toTimeColumnLetter},"<>") - SUMIFS($${fromTimeColumnLetter}:$${fromTimeColumnLetter},$${dateColumnLetter}:$${dateColumnLetter},$${dateColumnLetter}${currentRow + 1},$${fromTimeColumnLetter}:$${fromTimeColumnLetter},"<>",$${toTimeColumnLetter}:$${toTimeColumnLetter},"<>")) * 24`;
         
         dailySummaryCell.setFormula(dailyTotalFormula);
@@ -177,8 +299,9 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
       }
     }
     
+    const totalFormula = `=(SUMIFS($${toTimeColumnLetter}:$${toTimeColumnLetter},$${fromTimeColumnLetter}:$${fromTimeColumnLetter},"<>",$${toTimeColumnLetter}:$${toTimeColumnLetter},"<>") - SUMIFS($${fromTimeColumnLetter}:$${fromTimeColumnLetter},$${fromTimeColumnLetter}:$${fromTimeColumnLetter},"<>",$${toTimeColumnLetter}:$${toTimeColumnLetter},"<>")) * 24`;
     // Add monthly total at the end
-    setupMonthlyTotalFormula(sheet, dailySummaryRows, currentRow + 1);
+    setupMonthlyTotalFormula(sheet, dailySummaryRows, currentRow + 1, totalFormula);
     
     Logger.log(`Setup ${daysInMonth} dates with 2 sessions per working day for ${year}-${String(month).padStart(2, '0')}`);
     
@@ -193,8 +316,9 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
  * @param {Object} sheet - Google Sheets sheet object
  * @param {Array} dailySummaryRows - Array of row numbers where daily summaries are located
  * @param {number} totalRow - Row number for monthly total
+ * @param {string} formula - Formula string for calculating monthly total
  */
-function setupMonthlyTotalFormula(sheet, dailySummaryRows, totalRow) {
+function setupMonthlyTotalFormula(sheet, dailySummaryRows, totalRow, formula) {
   try {
     // Use the same column configuration as setupMonthlyDatesWithSessions
     const columnOrder = TIMESHEET_TEMPLATE_CONFIG.COLUMN_ORDER;
@@ -205,13 +329,7 @@ function setupMonthlyTotalFormula(sheet, dailySummaryRows, totalRow) {
       return;
     }
     
-    // Create range string for monthly total formula
-    const ranges = dailySummaryRows.map(function(row) {
-      return `${getColumnLetter(DAILY_TOTAL_COLUMN)}${row}`;
-    });
-    
     const monthlyTotalCell = sheet.getRange(totalRow, DAILY_TOTAL_COLUMN);
-    const formula = `=SUM(${ranges.join(',')})`;
     
     monthlyTotalCell.setFormula(formula);
     monthlyTotalCell.setFontWeight('bold');

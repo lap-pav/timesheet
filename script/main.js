@@ -9,6 +9,7 @@ function onOpen() {
     var ui = SpreadsheetApp.getUi();
     ui.createMenu('Custom Menu')
       .addItem('Generate Timesheet Files', 'generateTimesheetFiles')
+      .addItem('Change Permissions to View-Only', 'changeTimesheetPermissionsToViewOnly')
       .addSeparator()
       .addItem('Create a New Report', 'generateReportFromNaturalLanguage')
       .addItem('Report', 'exportConfigurableReportUI')
@@ -32,6 +33,68 @@ function generateTimesheetFiles() {
     createTimesheetFile(folder, member, time);
   });
   SpreadsheetApp.getUi().alert(`Timesheet files generated in folder: ${folder.getName()}`);
+}
+
+/**
+ * UI function to change all member timesheet permissions from edit to view
+ */
+function changeTimesheetPermissionsToViewOnly() {
+  try {
+    const ui = SpreadsheetApp.getUi();
+    
+    // Get current time period
+    const time = readTime();
+    
+    if (!time) {
+      ui.alert('Error', 'Could not read time period. Please ensure it is configured in the Options sheet.', ui.ButtonSet.OK);
+      return;
+    }
+    
+    // Confirm action
+    const confirmResponse = ui.alert(
+      'Confirm Permission Change',
+      `This will change ALL timesheet files for period "${time}" from EDIT to VIEW permission.\n\n` +
+      'Members will no longer be able to edit their timesheets.\n\n' +
+      'Continue?',
+      ui.ButtonSet.YES_NO
+    );
+    
+    if (confirmResponse !== ui.Button.YES) {
+      ui.alert('Operation Cancelled', 'No changes were made.', ui.ButtonSet.OK);
+      return;
+    }
+    
+    // Show progress message
+    ui.alert(
+      'Processing',
+      'Changing permissions... This may take a few minutes.\n\nCheck the Logs (Ctrl+Enter or Cmd+Enter) for progress.',
+      ui.ButtonSet.OK
+    );
+    
+    // Execute permission change
+    const result = changeAllTimesheetsToViewOnly(time);
+    
+    // Show results
+    let message = `Permission Change Complete!\n\n`;
+    message += `Time Period: ${time}\n`;
+    message += `Total members processed: ${result.processed}\n`;
+    message += `Successfully changed: ${result.success}\n`;
+    message += `Failed: ${result.failed}`;
+    
+    if (result.errors.length > 0) {
+      message += '\n\nErrors:\n• ' + result.errors.slice(0, 5).join('\n• ');
+      if (result.errors.length > 5) {
+        message += `\n... and ${result.errors.length - 5} more errors`;
+      }
+      message += '\n\nCheck Logs for full details.';
+    }
+    
+    ui.alert('Results', message, ui.ButtonSet.OK);
+    
+  } catch (error) {
+    SpreadsheetApp.getUi().alert('Error', `Error: ${error.message}`, SpreadsheetApp.getUi().ButtonSet.OK);
+    Logger.log(`Error in changeTimesheetPermissionsToViewOnly: ${error.message}`);
+  }
 }
 
 // ============================================================================
