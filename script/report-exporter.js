@@ -1469,8 +1469,22 @@ function createMemberDatePivot(data) {
       };
     }
     
-    // Step 3: Collect all unique members and process their hours
-    const members = new Set();
+    // Step 3: Get all active members from Members sheet
+    const allActiveMembers = new Set();
+    try {
+      const membersList = readMembers(); // Get all active members
+      membersList.forEach(function(member) {
+        const memberName = member[MEMBER_COLUMNS.NAME];
+        if (memberName) {
+          allActiveMembers.add(memberName);
+        }
+      });
+      Logger.log(`Found ${allActiveMembers.size} active members from Members sheet`);
+    } catch (error) {
+      Logger.log(`Warning: Could not read Members sheet: ${error.message}`);
+    }
+    
+    // Step 4: Process reported hours from data
     const memberDateHours = {}; // { member: { date: { totalHours, offHours } } }
     
     // Process each record to build member-date matrix
@@ -1493,7 +1507,8 @@ function createMemberDatePivot(data) {
         normalizedDate = String(recordDate);
       }
       
-      members.add(memberName);
+      // Add to active members list (includes members who reported but aren't in Members sheet)
+      allActiveMembers.add(memberName);
       
       // Initialize member data structure
       if (!memberDateHours[memberName]) {
@@ -1512,10 +1527,10 @@ function createMemberDatePivot(data) {
       memberDateHours[memberName][normalizedDate].offHours += offHours;
     });
     
-    // Step 4: Sort members alphabetically
-    const sortedMembers = Array.from(members).sort();
+    // Step 5: Sort all members alphabetically (includes those with no reports)
+    const sortedMembers = Array.from(allActiveMembers).sort();
     
-    // Step 5: Build pivot table rows with all dates in month
+    // Step 6: Build pivot table rows with all dates in month (including members with 0 hours)
     const pivotRows = [];
     const currentDate = new Date();
     
@@ -1526,6 +1541,11 @@ function createMemberDatePivot(data) {
       
       let memberTotal = 0;
       let memberOffTotal = 0;
+      
+      // Initialize member data if they haven't reported anything
+      if (!memberDateHours[memberName]) {
+        memberDateHours[memberName] = {};
+      }
       
       // Add hours for ALL dates in month
       allDatesInMonth.forEach(function(date) {
@@ -1544,7 +1564,7 @@ function createMemberDatePivot(data) {
       pivotRows.push(memberRow);
     });
     
-    // Step 6: Create formatting information for export
+    // Step 7: Create formatting information for export
     const formatInfo = {
       dateColumns: allDatesInMonth,
       dateFormatting: {},
