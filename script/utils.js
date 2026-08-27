@@ -780,3 +780,17 @@ function readMembers() {
 
   return data;
 }
+
+/**
+ * Capitalize the first letter of each word in a string
+ * @param {string} text - Text to capitalize
+ * @returns {string} Text with the first letter of each word capitalized
+ */
+function capitalizeWords(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return '';
+  }
+  return text.replace(/\S+/g, function(word) {
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+}
