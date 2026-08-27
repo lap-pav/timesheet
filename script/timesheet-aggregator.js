@@ -202,7 +202,7 @@ function getTimesheetFiles(folder) {
             file: file,
             fileName: fileName,
             fileId: fileId,
-            memberName: memberName,
+            memberName: memberName.trim(),
             monthYear: monthYear,
             isValid: true
           });

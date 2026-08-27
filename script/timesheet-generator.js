@@ -222,7 +222,8 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
       TC_FROM_TIME_COLUMN: columnOrder.indexOf('TC_FROM_TIME') + 1,
       TC_TO_TIME_COLUMN: columnOrder.indexOf('TC_TO_TIME') + 1,
       OFF_COLUMN: columnOrder.indexOf('OFF') + 1,
-      DAILY_TOTAL_COLUMN: columnOrder.length + 1 // Next column after template columns
+      DAILY_TOTAL_COLUMN: columnOrder.length + 1, // Next column after template columns (Column J)
+      VALIDATION_COLUMN: columnOrder.length + 2 // Column K for validation
     };
     
     const DATA_START_ROW = 2; // Row where timesheet data starts
@@ -236,7 +237,7 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
     
     // Clear existing data area (estimate max rows needed: 31 days × 2 sessions + summary rows)
     const maxRows = 70;
-    const clearRange = sheet.getRange(DATA_START_ROW, 1, maxRows, 10);
+    const clearRange = sheet.getRange(DATA_START_ROW, 1, maxRows, 11); // Include validation column K
     clearRange.clear();
     clearRange.setBackground(WEEKDAY_COLOR);
     
@@ -263,7 +264,7 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
         dateCell.setValue(formattedDate);
         
         // Highlight entire weekend row
-        const weekendRange = sheet.getRange(currentRow, 1, 1, 9); // Columns A-I
+        const weekendRange = sheet.getRange(currentRow, 1, 1, 11); // Columns A-K
         weekendRange.setBackground(WEEKEND_COLOR);
         weekendRange.setFontColor('#666666'); // Darker text
         
@@ -303,6 +304,9 @@ function setupMonthlyDatesWithSessions(sheet, year, month) {
     // Add monthly total at the end
     setupMonthlyTotalFormula(sheet, dailySummaryRows, currentRow + 1, totalFormula);
     
+    // Add validation formula to all data rows (Column K)
+    setupValidationColumn(sheet, DATA_START_ROW, currentRow - 1, TEMPLATE_CONFIG);
+    
     Logger.log(`Setup ${daysInMonth} dates with 2 sessions per working day for ${year}-${String(month).padStart(2, '0')}`);
     
   } catch (error) {
@@ -339,6 +343,41 @@ function setupMonthlyTotalFormula(sheet, dailySummaryRows, totalRow, formula) {
     
   } catch (error) {
     Logger.log(`Error in setupMonthlyTotalFormula: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Setup validation formula in Column K for all data rows
+ * @param {Object} sheet - Google Sheets sheet object
+ * @param {number} startRow - First data row
+ * @param {number} endRow - Last data row
+ * @param {Object} config - Template configuration with column mappings
+ */
+function setupValidationColumn(sheet, startRow, endRow, config) {
+  try {
+    if (endRow < startRow) return;
+    
+    // Get column letters
+    const colA = getColumnLetter(config.DATE_COLUMN);
+    const colB = getColumnLetter(config.FROM_TIME_COLUMN);
+    const colC = getColumnLetter(config.TO_TIME_COLUMN);
+    const colI = getColumnLetter(config.OFF_COLUMN);
+    const colJ = getColumnLetter(config.DAILY_TOTAL_COLUMN);
+    const colK = getColumnLetter(config.VALIDATION_COLUMN);
+    
+    // Validation formula with relative row references (will auto-adjust for each row)
+    // Using R[0]C notation would be ideal, but let's use a formula that references the current row
+    const validationFormula = `=IF(OR(${colA}${startRow}="", ${colB}${startRow}="", ${colC}${startRow}=""), "", IF(COUNTIFS($${colA}:$${colA}, ${colA}${startRow}, $${colB}:$${colB}, "<"&${colC}${startRow}, $${colC}:$${colC}, ">"&${colB}${startRow}) > 1, "Lỗi: Trùng/Đè giờ", IF(ROUND(SUMIFS($${colJ}:$${colJ}, $${colA}:$${colA}, ${colA}${startRow}), 4) <> 8, IF(SUMIFS($${colJ}:$${colJ}, $${colA}:$${colA}, ${colA}${startRow}) < 8, "Lỗi: Thiếu giờ (<8h)", IF (${colI}${startRow} <> "", "OK", "Lỗi: Thừa giờ (>8h)")), "OK")))`;
+    
+    // Set formula in first cell
+    const validationRange = sheet.getRange(startRow, config.VALIDATION_COLUMN, endRow - startRow + 1, 1);
+    validationRange.setFormula(validationFormula);
+    
+    Logger.log(`Applied validation formula to ${colK}${startRow}:${colK}${endRow}`);
+    
+  } catch (error) {
+    Logger.log(`Error in setupValidationColumn: ${error.message}`);
     throw error;
   }
 }
